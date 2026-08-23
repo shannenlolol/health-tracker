@@ -1,10 +1,10 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
 from app.config import settings
 from app.db.database import SessionLocal
-from app.models import Meal, User, Weight
+from app.models import Meal, MealReminder, User, Weight
 from app.services.meal_analyzer import MealEstimate
 
 
@@ -28,6 +28,67 @@ def update_calorie_target(user_id: int, daily_calorie_target: int) -> User:
         return user
 
 
+def reminder_settings(user_id: int) -> dict[str, str | None]:
+    settings_by_meal = {"breakfast": None, "lunch": None, "dinner": None}
+    with SessionLocal() as db:
+        reminders = db.scalars(select(MealReminder).where(MealReminder.user_id == user_id))
+        for reminder in reminders:
+            settings_by_meal[reminder.meal_type] = reminder.reminder_time
+    return settings_by_meal
+
+
+def set_reminder(user_id: int, meal_type: str, reminder_time: str | None) -> None:
+    with SessionLocal() as db:
+        reminder = db.scalar(
+            select(MealReminder).where(
+                MealReminder.user_id == user_id,
+                MealReminder.meal_type == meal_type,
+            )
+        )
+        if reminder is None:
+            reminder = MealReminder(user_id=user_id, meal_type=meal_type)
+            db.add(reminder)
+        reminder.reminder_time = reminder_time
+        reminder.last_sent_on = None
+        db.commit()
+
+
+def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_utc: datetime) -> list[tuple[int, int, str]]:
+    due: list[tuple[int, int, str]] = []
+    with SessionLocal() as db:
+        reminders = db.scalars(
+            select(MealReminder).where(
+                MealReminder.reminder_time == local_time,
+                (MealReminder.last_sent_on.is_(None) | (MealReminder.last_sent_on != local_date)),
+            )
+        )
+        for reminder in reminders:
+            already_logged = db.scalar(
+                select(Meal.id).where(
+                    Meal.user_id == reminder.user_id,
+                    Meal.meal_type == reminder.meal_type,
+                    Meal.recorded_at >= start_utc,
+                    Meal.recorded_at < end_utc,
+                ).limit(1)
+            )
+            if already_logged is None:
+                telegram_user_id = db.scalar(select(User.telegram_user_id).where(User.id == reminder.user_id))
+                if telegram_user_id is not None:
+                    due.append((reminder.id, telegram_user_id, reminder.meal_type))
+            else:
+                reminder.last_sent_on = local_date
+        db.commit()
+    return due
+
+
+def mark_reminder_sent(reminder_id: int, sent_on: date) -> None:
+    with SessionLocal() as db:
+        reminder = db.get(MealReminder, reminder_id)
+        if reminder is not None:
+            reminder.last_sent_on = sent_on
+            db.commit()
+
+
 def add_weight(user_id: int, kg: float) -> Weight:
     with SessionLocal() as db:
         entry = Weight(user_id=user_id, weight_kg=kg)
@@ -36,9 +97,9 @@ def add_weight(user_id: int, kg: float) -> Weight:
         return entry
 
 
-def add_meal(user_id: int, estimate: MealEstimate, image_file_id: str | None = None) -> Meal:
+def add_meal(user_id: int, estimate: MealEstimate, meal_type: str, image_file_id: str | None = None) -> Meal:
     with SessionLocal() as db:
-        meal = Meal(user_id=user_id, image_file_id=image_file_id, **estimate.model_dump())
+        meal = Meal(user_id=user_id, meal_type=meal_type, image_file_id=image_file_id, **estimate.model_dump())
         db.add(meal)
         db.commit()
         return meal

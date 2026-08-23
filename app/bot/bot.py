@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from functools import wraps
 import logging
 from datetime import datetime, time, timedelta, timezone
@@ -15,9 +16,13 @@ from app.services.tracker import (
     add_meal,
     add_weight,
     delete_entry,
+    due_reminders,
     get_user,
     last_entry,
+    mark_reminder_sent,
     progress_entries,
+    reminder_settings,
+    set_reminder,
     today_entries,
     update_calorie_target,
 )
@@ -29,7 +34,8 @@ MENU = ReplyKeyboardMarkup(
         ["⚖️ Log weight", "🍽️ Log meal"],
         ["🔎 Check meal", "📋 Today"],
         ["📈 Progress", "🎯 Calorie target"],
-        ["↩️ Undo", "❓ Help"],
+        ["⏰ Reminders", "↩️ Undo"],
+        ["❓ Help"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -81,10 +87,11 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📋 Today — see today’s totals\n"
         "📈 Progress — see your 30-day charts\n"
         "🎯 Calorie target — change your daily calorie goal\n"
+        "⏰ Reminders — set or disable meal reminders\n"
         "↩️ Undo — remove your last entry\n\n"
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /target 1800, /today, /progress, or /undo.",
+        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, or /undo.",
         reply_markup=MENU,
     )
 
@@ -212,6 +219,78 @@ async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def reminders_keyboard(values: dict[str, str | None]) -> InlineKeyboardMarkup:
+    buttons = []
+    for meal_type in ("breakfast", "lunch", "dinner"):
+        value = values[meal_type] or "None"
+        buttons.append([InlineKeyboardButton(
+            f"{meal_type.title()}: {value}", callback_data=f"reminder:choose:{meal_type}"
+        )])
+    return InlineKeyboardMarkup(buttons)
+
+
+@private
+async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("waiting_for", None)
+    values = await asyncio.to_thread(reminder_settings, user_for(update).id)
+    await update.effective_message.reply_text(
+        f"⏰ Meal reminders ({settings.timezone})\n\n"
+        "Choose a meal to set its reminder time. A reminder is sent only if that meal has not been logged.",
+        reply_markup=reminders_keyboard(values),
+    )
+
+
+@private
+async def reminder_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    _, action, meal_type = query.data.split(":")
+    if action == "disable":
+        await asyncio.to_thread(set_reminder, user_for(update).id, meal_type, None)
+        context.user_data.pop("waiting_for", None)
+        values = await asyncio.to_thread(reminder_settings, user_for(update).id)
+        await query.edit_message_text(
+            f"✅ {meal_type.title()} reminder set to None.",
+            reply_markup=reminders_keyboard(values),
+        )
+        return
+    context.user_data["waiting_for"] = f"reminder:{meal_type}"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"Set {meal_type} to None", callback_data=f"reminder:disable:{meal_type}")
+    ]])
+    await query.edit_message_text(
+        f"What time should I remind you about {meal_type}?\n\n"
+        "Type a 24-hour time, for example: 08:00 or 13:30. You can also type none.",
+        reply_markup=keyboard,
+    )
+
+
+async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str, raw: str) -> None:
+    value = raw.strip().lower()
+    if value in {"none", "off", "disable"}:
+        reminder_time = None
+    else:
+        parsed_time = None
+        compact_value = value.replace(" ", "")
+        for time_format in ("%H:%M", "%I%p", "%I:%M%p"):
+            try:
+                parsed_time = datetime.strptime(compact_value, time_format)
+                break
+            except ValueError:
+                continue
+        if parsed_time is None:
+            await update.message.reply_text("Please enter a time like 8am, 08:00, or 13:30, or type none.")
+            return
+        reminder_time = parsed_time.strftime("%H:%M")
+    await asyncio.to_thread(set_reminder, user_for(update).id, meal_type, reminder_time)
+    context.user_data.pop("waiting_for", None)
+    display = reminder_time or "None"
+    await update.message.reply_text(
+        f"✅ {meal_type.title()} reminder set to {display}.",
+        reply_markup=MENU,
+    )
+
+
 @private
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not settings.openai_api_key:
@@ -233,31 +312,72 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def show_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE, estimate: MealEstimate) -> None:
     context.user_data["pending_meal"] = estimate.model_dump()
+    context.user_data.pop("pending_meal_type", None)
     context.user_data.pop("waiting_for", None)
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Save", callback_data="meal:save"),
-        InlineKeyboardButton("✏️ Change", callback_data="meal:edit"),
-        InlineKeyboardButton("❌ Cancel", callback_data="meal:cancel"),
-    ]])
-    await update.effective_message.reply_text(estimate_text(estimate), reply_markup=keyboard)
+    await update.effective_message.reply_text(
+        estimate_text(estimate), reply_markup=meal_confirmation_keyboard()
+    )
+
+
+def meal_confirmation_keyboard(selected: str | None = None) -> InlineKeyboardMarkup:
+    type_buttons = [
+        InlineKeyboardButton(
+            f"{'✅ ' if selected == meal_type else ''}{meal_type.title()}",
+            callback_data=f"meal:type:{meal_type}",
+        )
+        for meal_type in ("breakfast", "lunch", "dinner", "snack")
+    ]
+    return InlineKeyboardMarkup([
+        type_buttons[:2],
+        type_buttons[2:],
+        [
+            InlineKeyboardButton("✅ Save", callback_data="meal:save"),
+            InlineKeyboardButton("✏️ Change", callback_data="meal:edit"),
+            InlineKeyboardButton("❌ Cancel", callback_data="meal:cancel"),
+        ],
+    ])
 
 
 @private
 async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
-    action = query.data.split(":", 1)[1]
+    parts = query.data.split(":")
+    action = parts[1]
     pending = context.user_data.get("pending_meal")
+    if action == "type" and pending:
+        await query.answer()
+        meal_type = parts[2]
+        context.user_data["pending_meal_type"] = meal_type
+        await query.edit_message_reply_markup(reply_markup=meal_confirmation_keyboard(meal_type))
+        return
     if action == "save" and pending:
-        meal = await asyncio.to_thread(add_meal, user_for(update).id, MealEstimate(**pending), context.user_data.get("pending_image_file_id"))
+        meal_type = context.user_data.get("pending_meal_type")
+        if not meal_type:
+            await query.answer("Choose Breakfast, Lunch, Dinner, or Snack first.", show_alert=True)
+            return
+        await query.answer()
+        meal = await asyncio.to_thread(
+            add_meal,
+            user_for(update).id,
+            MealEstimate(**pending),
+            meal_type,
+            context.user_data.get("pending_image_file_id"),
+        )
         context.user_data.pop("pending_meal", None)
+        context.user_data.pop("pending_meal_type", None)
         context.user_data.pop("pending_image_file_id", None)
-        await query.edit_message_text(f"✅ Meal saved\n\n{meal.description} — about {meal.estimated_calories:,} kcal")
+        await query.edit_message_text(
+            f"✅ {meal.meal_type.title()} saved\n\n"
+            f"{meal.description} — about {meal.estimated_calories:,} kcal"
+        )
     elif action == "edit":
+        await query.answer()
         context.user_data["waiting_for"] = "meal"
         await query.edit_message_text("No problem. Type what should be changed, including the portion.\n\nExample: half a plate of rice, not a full plate")
     else:
+        await query.answer()
         context.user_data.pop("pending_meal", None)
+        context.user_data.pop("pending_meal_type", None)
         context.user_data.pop("pending_image_file_id", None)
         await query.edit_message_text("Cancelled — nothing was saved.")
 
@@ -335,7 +455,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     actions = {
         "⚖️ Log weight": ask_weight, "🍽️ Log meal": ask_meal, "🔎 Check meal": check_command,
         "📋 Today": today, "📈 Progress": progress, "🎯 Calorie target": calorie_target_command,
-        "↩️ Undo": undo, "❓ Help": help_message,
+        "⏰ Reminders": reminders_command, "↩️ Undo": undo, "❓ Help": help_message,
     }
     if text in actions:
         await actions[text](update, context)
@@ -345,6 +465,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await check_meal(update, context, text)
     elif context.user_data.get("waiting_for") == "calorie_target":
         await save_calorie_target(update, context, text)
+    elif str(context.user_data.get("waiting_for", "")).startswith("reminder:"):
+        meal_type = context.user_data["waiting_for"].split(":", 1)[1]
+        await save_reminder(update, context, meal_type, text)
     else:
         await analyze_text(update, context, text)
 
@@ -353,18 +476,61 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     log.exception("Unhandled Telegram update", exc_info=context.error)
 
 
+async def reminder_loop(application: Application) -> None:
+    tz = ZoneInfo(settings.timezone)
+    while True:
+        now = datetime.now(tz)
+        start = datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(timezone.utc)
+        end = start + timedelta(days=1)
+        reminders = await asyncio.to_thread(
+            due_reminders, now.date(), now.strftime("%H:%M"), start, end
+        )
+        for reminder_id, telegram_user_id, meal_type in reminders:
+            try:
+                await application.bot.send_message(
+                    telegram_user_id,
+                    f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
+                    reply_markup=MENU,
+                )
+            except Exception:
+                log.exception("Could not send %s reminder to user %s", meal_type, telegram_user_id)
+            else:
+                await asyncio.to_thread(mark_reminder_sent, reminder_id, now.date())
+        await asyncio.sleep(max(1, 60 - datetime.now(tz).second))
+
+
+async def start_reminder_loop(application: Application) -> None:
+    application.bot_data["reminder_task"] = asyncio.create_task(reminder_loop(application))
+
+
+async def stop_reminder_loop(application: Application) -> None:
+    task = application.bot_data.get("reminder_task")
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 def build_application() -> Application:
-    app = Application.builder().token(settings.telegram_bot_token).build()
+    app = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .post_init(start_reminder_loop)
+        .post_shutdown(stop_reminder_loop)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_message))
     app.add_handler(CommandHandler("weight", weight_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("target", calorie_target_command))
+    app.add_handler(CommandHandler("reminders", reminders_command))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CommandHandler("undo", undo))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
     app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))
+    app.add_handler(CallbackQueryHandler(reminder_action, pattern=r"^reminder:"))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
     app.add_error_handler(error_handler)

@@ -13,6 +13,6 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def init_db() -> None:
-    from app.models import Meal, User, Weight  # noqa: F401
+    from app.models import Meal, MealReminder, User, Weight  # noqa: F401
 
     Base.metadata.create_all(engine)

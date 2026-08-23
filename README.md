@@ -8,14 +8,18 @@ A private Telegram bot for simple weight and meal tracking. It is designed aroun
 - Estimates calories and macros from meal descriptions or photos
 - Checks a food's estimated nutrition without saving it using `/check`, for example `/check kopi O`
 - Lets each user set their own daily calorie target using the menu or `/target 1800`
+- Sends optional per-user breakfast, lunch, and dinner reminders only when that meal has not been logged
 - Always asks before saving an AI meal estimate
+- Lets the user label each meal as breakfast, lunch, dinner, or snack before saving
 - Shows today's meals, calories, protein, and weight
 - Sends 30-day weight and calorie charts
 - Safely confirms before removing the latest entry
 
 The bot shows these persistent options:
 
-`⚖️ Log weight` · `🍽️ Log meal` · `🔎 Check meal` · `📋 Today` · `📈 Progress` · `🎯 Calorie target` · `↩️ Undo` · `❓ Help`
+`⚖️ Log weight` · `🍽️ Log meal` · `🔎 Check meal` · `📋 Today` · `📈 Progress` · `🎯 Calorie target` · `⏰ Reminders` · `↩️ Undo` · `❓ Help`
+
+Each user can set breakfast, lunch, and dinner to a 24-hour reminder time or `None`. Times use the configured `TIMEZONE` (Asia/Singapore by default).
 
 Opening a Telegram bot chat does not send it a message. The initial **Start** button sends `/start`, allowing the bot to greet the user and display its menu. Later, `/start` can reopen the main menu.
 

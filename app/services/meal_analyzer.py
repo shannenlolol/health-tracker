@@ -8,7 +8,6 @@ from app.config import settings
 
 class MealEstimate(BaseModel):
     description: str = Field(description="Short, familiar name for the complete meal")
-    meal_type: str = Field(description="breakfast, lunch, dinner, or snack")
     estimated_calories: int = Field(ge=0, le=5000)
     protein_g: float = Field(ge=0, le=500)
     carbs_g: float = Field(ge=0, le=1000)
@@ -19,7 +18,7 @@ SYSTEM_PROMPT = """You estimate nutrition for an older Singaporean adult's food 
 Return one practical estimate for the whole meal. Recognize local foods and portions.
 Do not give medical advice. If portions are unclear, use a typical hawker/restaurant serving.
 Keep the description plain and under 80 characters. Round calories to the nearest 10 and
-macros to whole grams. meal_type must be breakfast, lunch, dinner, or snack."""
+macros to whole grams."""
 
 
 class MealAnalyzer:

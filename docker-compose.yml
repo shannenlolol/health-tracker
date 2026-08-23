@@ -1,0 +1,33 @@
+services:
+  bot:
+    image: ${BOT_IMAGE:-ghcr.io/shannenlolol/health-tracker:latest}
+    env_file: .env
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: health_tracker
+      POSTGRES_USER: health_tracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U health_tracker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  updater:
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

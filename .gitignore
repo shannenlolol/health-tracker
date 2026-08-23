@@ -1,0 +1,11 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+*.db
+.pytest_cache/
+.DS_Store
+.vscode/
+progress-*.png
+postgres-data/
+*.backup

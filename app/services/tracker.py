@@ -18,6 +18,16 @@ def get_user(telegram_user_id: int, name: str) -> User:
         return user
 
 
+def update_calorie_target(user_id: int, daily_calorie_target: int) -> User:
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None:
+            raise ValueError("User not found")
+        user.daily_calorie_target = daily_calorie_target
+        db.commit()
+        return user
+
+
 def add_weight(user_id: int, kg: float) -> Weight:
     with SessionLocal() as db:
         entry = Weight(user_id=user_id, weight_kg=kg)

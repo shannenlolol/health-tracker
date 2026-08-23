@@ -11,12 +11,26 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from app.config import settings
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import make_chart
-from app.services.tracker import add_meal, add_weight, delete_entry, get_user, last_entry, progress_entries, today_entries
+from app.services.tracker import (
+    add_meal,
+    add_weight,
+    delete_entry,
+    get_user,
+    last_entry,
+    progress_entries,
+    today_entries,
+    update_calorie_target,
+)
 
 
 log = logging.getLogger(__name__)
 MENU = ReplyKeyboardMarkup(
-    [["⚖️ Log weight", "🍽️ Log meal"], ["📋 Today", "📈 Progress"], ["↩️ Undo", "❓ Help"]],
+    [
+        ["⚖️ Log weight", "🍽️ Log meal"],
+        ["🔎 Check meal", "📋 Today"],
+        ["📈 Progress", "🎯 Calorie target"],
+        ["↩️ Undo", "❓ Help"],
+    ],
     resize_keyboard=True,
     is_persistent=True,
     input_field_placeholder="Choose an option",
@@ -63,12 +77,14 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Here’s what I can do:\n\n"
         "⚖️ Log weight — enter your weight in kg\n"
         "🍽️ Log meal — type the food or send a photo\n"
+        "🔎 Check meal — estimate food without saving it\n"
         "📋 Today — see today’s totals\n"
         "📈 Progress — see your 30-day charts\n"
+        "🎯 Calorie target — change your daily calorie goal\n"
         "↩️ Undo — remove your last entry\n\n"
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /today, /progress, or /undo.",
+        "You can also type /weight 82.4, /target 1800, /today, /progress, or /undo.",
         reply_markup=MENU,
     )
 
@@ -159,6 +175,39 @@ async def check_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, text: s
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(
         estimate_text(estimate).replace("Does this look right?", "ℹ️ This was only a check. Nothing was saved."),
+        reply_markup=MENU,
+    )
+
+
+@private
+async def calorie_target_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.args:
+        await save_calorie_target(update, context, " ".join(context.args))
+        return
+    user = user_for(update)
+    context.user_data["waiting_for"] = "calorie_target"
+    await update.message.reply_text(
+        f"Your current daily target is {user.daily_calorie_target:,} kcal.\n\n"
+        "What would you like to change it to? Type a number, for example: 1800",
+        reply_markup=MENU,
+    )
+
+
+async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str) -> None:
+    try:
+        target = int(raw.lower().replace("kcal", "").replace(",", "").strip())
+        if not 500 <= target <= 10_000:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter a daily calorie target from 500 to 10,000 kcal, for example: 1800."
+        )
+        return
+    user = user_for(update)
+    await asyncio.to_thread(update_calorie_target, user.id, target)
+    context.user_data.pop("waiting_for", None)
+    await update.message.reply_text(
+        f"✅ Daily calorie target updated to {target:,} kcal.",
         reply_markup=MENU,
     )
 
@@ -284,8 +333,9 @@ async def undo_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     actions = {
-        "⚖️ Log weight": ask_weight, "🍽️ Log meal": ask_meal, "📋 Today": today,
-        "📈 Progress": progress, "↩️ Undo": undo, "❓ Help": help_message,
+        "⚖️ Log weight": ask_weight, "🍽️ Log meal": ask_meal, "🔎 Check meal": check_command,
+        "📋 Today": today, "📈 Progress": progress, "🎯 Calorie target": calorie_target_command,
+        "↩️ Undo": undo, "❓ Help": help_message,
     }
     if text in actions:
         await actions[text](update, context)
@@ -293,6 +343,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await save_weight(update, context, text)
     elif context.user_data.get("waiting_for") == "check":
         await check_meal(update, context, text)
+    elif context.user_data.get("waiting_for") == "calorie_target":
+        await save_calorie_target(update, context, text)
     else:
         await analyze_text(update, context, text)
 
@@ -307,6 +359,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("help", help_message))
     app.add_handler(CommandHandler("weight", weight_command))
     app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(CommandHandler("target", calorie_target_command))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CommandHandler("undo", undo))

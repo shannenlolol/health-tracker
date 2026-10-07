@@ -27,7 +27,7 @@ Opening a Telegram bot chat does not send it a message. The initial **Start** bu
 
 1. Create a bot with Telegram's **@BotFather** and copy its token.
 2. Create an OpenAI API key.
-3. Set up and run:
+3. With Python 3.12 installed, open a terminal in your downloaded repository folder and run (macOS/Linux):
 
 ```bash
 python3 -m venv .venv
@@ -39,23 +39,21 @@ cp .env.example .env
 python -m app.main
 ```
 
-SQLite is the default, so no database setup is needed locally. To keep the bot private, set one or more numeric Telegram IDs in `ALLOWED_TELEGRAM_USER_IDS`, separated by commas. Each allowed account has completely separate records.
+For Windows PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`. The example environment file is configured for the NAS, so replace its `DATABASE_URL` with the SQLite value shown above for a local run. No database server is needed locally. To keep the bot private, set one or more numeric Telegram IDs in `ALLOWED_TELEGRAM_USER_IDS`, separated by commas. Each allowed account has completely separate records.
 
-## Automated UGREEN / Docker deployment
+## Run on a UGREEN NAS
 
-Set these in `.env`:
+Follow [SETUP.md](SETUP.md) to configure your own Telegram bot, OpenAI key, allowed users, and PostgreSQL database, then start using the bot. No application-code changes are needed.
 
-```text
-POSTGRES_PASSWORD=use-a-long-random-password
-DATABASE_URL=postgresql+psycopg://health_tracker:use-a-long-random-password@db/health_tracker
-```
+The guide includes two ways to deploy and update your own copy:
 
-The repository's GitHub Action builds an ARM64 image and publishes it to GitHub Container Registry. The UGREEN Compose project runs the bot, PostgreSQL, and a labeled automatic updater. PostgreSQL data is stored in the local `postgres-data` directory and is never included in the application image.
+- **Automatic:** GitHub Actions builds ARM64 and AMD64 images when application code is pushed to `main`; the NAS checks for and installs the new bot image approximately every five minutes.
+- **Manual:** build on the NAS with `docker-compose.manual.yml`; upload your changed source and rebuild only when you want to install an update. GitHub Actions is optional.
 
-The “bot image” is the packaged Python application that Docker downloads and runs. It is not a profile picture or meal photo. It contains the code and Python dependencies, but it does not contain `.env`, API keys, passwords, or health records.
-
-For the complete from-scratch Telegram, GitHub automation, and UGREEN NAS walkthrough, see [SETUP.md](SETUP.md).
+Both keep health records in `postgres-data` on the NAS, separate from the bot container. The automatic workflow publishes to the GitHub repository owner's own container package.
 
 ## Privacy and limits
+
+Use the bot in one-to-one chats: the current code does not block group chats, where replies could expose your records to other participants.
 
 Meal nutrition is an estimate, especially from photos. The bot asks the user to confirm every estimate. Weight and meal data are stored in your configured database; meal photos are analyzed through the OpenAI API but are not stored locally by this application.

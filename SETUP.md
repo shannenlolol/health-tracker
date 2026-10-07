@@ -58,19 +58,14 @@ DATABASE_URL=postgresql+psycopg://health_tracker:YOUR_DATABASE_PASSWORD@db/healt
 OPENAI_MODEL=gpt-4.1-mini
 TIMEZONE=Asia/Singapore
 DAILY_CALORIE_TARGET=2000
-ALLOWED_TELEGRAM_USER_IDS=YOUR_NUMERIC_TELEGRAM_ID
+ADMIN_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_USER_IDS=
 ```
 
 - Use the same database password twice. Keep `health_tracker` and `db` as shown.
 - Set your timezone. All users share it for reminders and daily totals.
-- Use numeric Telegram user IDs, not usernames or phone numbers. Separate multiple IDs with commas.
-- If you do not know the IDs, temporarily leave the allowlist empty and complete section 5 immediately after deployment:
-
-```dotenv
-ALLOWED_TELEGRAM_USER_IDS=
-```
-
-An empty allowlist lets anyone use the bot. Share its username only with intended users during enrollment.
+- Leave the two Telegram ID settings empty for the first start if you don't know your ID. Access stays closed while you complete admin setup in section 5.
+- If you already know your numeric Telegram ID, set `ADMIN_TELEGRAM_USER_IDS` now. Multiple admins can be separated by commas.
 
 Keep `.env` private and out of GitHub. Ensure the filename is `.env`, not `.env.txt`.
 
@@ -172,33 +167,54 @@ cd "/full/path/to/your/health-tracker"
 
 Replace the example path with your own. Run the relevant Docker command from this folder. If permission is denied, use an authorized NAS administrator account and prefix the command with `sudo`.
 
-## 5. Add users and start using the bot
+## 5. Set up the admin and approve users
 
-If you already configured the allowed IDs, skip to **Check the bot** below.
+### One-time admin setup
 
-1. With the temporary empty allowlist, have intended users open a private chat with your bot and press **Start**.
-2. In UGOS **Docker → Containers**, open the `db` container's **Terminal/Exec**. Choose the shell named `/bin/sh` if asked.
-3. Run this inside the database container:
+Start the Docker project, open a private chat with your bot, and send:
 
-```bash
-psql -U health_tracker -d health_tracker -c 'SELECT telegram_user_id, name FROM users;'
+```text
+/myid
 ```
 
-4. Copy the intended users' IDs into the NAS `.env`, replacing these examples:
+Copy the returned ID into the NAS `.env`:
 
 ```dotenv
-ALLOWED_TELEGRAM_USER_IDS=123456789,987654321
+ADMIN_TELEGRAM_USER_IDS=YOUR_NUMERIC_TELEGRAM_ID
 ```
 
-5. Apply the setting using section 6. Do not leave the allowlist empty.
+Recreate the bot using section 6, then press **Start**. You will see **👥 Manage users**. Each configured admin should start a private chat so the bot can send approval requests to them.
+
+### Add and manage users from your phone
+
+1. Share your bot's username with an intended user.
+2. They press **Start → Request access**.
+3. You receive their name, username (if available), and numeric ID with **Approve / Reject** buttons.
+4. **Approve** immediately gives them the menu. **Reject** notifies them and deletes the pending request; the database keeps no rejection history.
+
+Open **Manage users** to review pending requests, list allowed users, add someone by numeric ID, or remove access with confirmation. You can also open the menu with:
+
+```text
+/admin
+```
+
+Removing access stops tracking and reminders but keeps health records. Configured admins cannot be removed through this menu. Rejected or removed people may request again; a five-minute in-memory cooldown limits repeat requests and resets when the bot restarts. Manually added users must start the bot before it can message them.
+
+Routine user management needs no `.env` edits or restart. If a notification fails, the request remains in **Pending requests**.
+
+### Upgrading an existing installation
+
+Back up first. At the first configured startup, the bot creates the access tables and imports only IDs explicitly listed in `ALLOWED_TELEGRAM_USER_IDS` (or the older singular setting). This happens once; restarting won't restore users you removed. Existing health records alone do not grant access. Subsequent access changes happen in **Manage users**, not the legacy environment setting.
+
+Set your admin ID as above. Existing imported users can still use the bot before an admin is configured, but new requests require an admin. An empty allowlist no longer permits everyone.
 
 ### Check the bot
 
 Confirm `db` is healthy and `bot` is running in UGOS. The automatic method also needs `updater` running.
 
-In a private Telegram chat, press **Start**, log a weight or meal, and open **Today**. Use **Calorie target** and **Reminders** to personalize your account.
+In a private Telegram chat, log a weight or meal and open **Today**. Have another account request access and verify approval from your phone.
 
-Run only one copy per bot token. Stop any local development copy using that token. Use a separate bot token when testing code while your NAS bot stays online.
+Run only one copy per bot token. Use a separate bot token when testing code while your NAS bot stays online.
 
 ## 6. Apply configuration changes
 

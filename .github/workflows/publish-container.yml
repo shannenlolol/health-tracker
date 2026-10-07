@@ -6,6 +6,7 @@ on:
     paths:
       - "app/**"
       - "Dockerfile"
+      - ".dockerignore"
       - "requirements.txt"
       - ".github/workflows/publish-container.yml"
   workflow_dispatch:
@@ -38,14 +39,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish ARM64 image
+      - name: Determine image name
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish ARM64 and AMD64 images
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm64
+          platforms: linux/arm64,linux/amd64
           push: true
           tags: |
-            ghcr.io/shannenlolol/health-tracker:latest
-            ghcr.io/shannenlolol/health-tracker:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

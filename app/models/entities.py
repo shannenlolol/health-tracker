@@ -55,3 +55,28 @@ class MealReminder(Base):
     meal_type: Mapped[str] = mapped_column(String(30))
     reminder_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     last_sent_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class AllowedUser(Base):
+    __tablename__ = "allowed_users"
+
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), default="User")
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A fresh token prevents old removal buttons from revoking a later approval.
+    token: Mapped[str] = mapped_column(String(32), unique=True)
+
+
+class AccessRequest(Base):
+    __tablename__ = "access_requests"
+
+    token: Mapped[str] = mapped_column(String(32), primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AccessMigration(Base):
+    __tablename__ = "access_migrations"
+
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)

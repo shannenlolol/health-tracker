@@ -54,6 +54,12 @@ def set_reminder(user_id: int, meal_type: str, reminder_time: str | None) -> Non
 
 
 def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_utc: datetime) -> list[tuple[int, int, str]]:
+    """Find reminders for this local minute that still need a meal log.
+
+    The query uses UTC bounds because meal timestamps are stored in UTC.
+    Suppressed reminders are marked handled here; delivered reminders are marked
+    only after Telegram accepts them, so failed sends aren't recorded as sent.
+    """
     due: list[tuple[int, int, str]] = []
     with SessionLocal() as db:
         reminders = db.scalars(

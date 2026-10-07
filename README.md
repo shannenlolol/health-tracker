@@ -25,21 +25,57 @@ Opening a Telegram bot chat does not send it a message. The initial **Start** bu
 
 ## Run locally
 
-1. Create a bot with Telegram's **@BotFather** and copy its token.
-2. Create an OpenAI API key.
-3. With Python 3.12 installed, open a terminal in your downloaded repository folder and run (macOS/Linux):
+Create a Telegram bot with **@BotFather** and an OpenAI API key. With Python 3.12 installed, open a terminal in your copy of this repository.
+
+Create and activate the environment (macOS/Linux):
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env, add both keys, and use SQLite for a local-only run:
-# DATABASE_URL=sqlite:///health_tracker.db
+```
+
+For Windows PowerShell, use:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Copy `.env.example` to `.env` in your editor. Set both keys, switch to SQLite, and leave the admin ID empty until you know it:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=YOUR_BOTFATHER_TOKEN
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+DATABASE_URL=sqlite:///health_tracker.db
+ADMIN_TELEGRAM_USER_IDS=
+ALLOWED_TELEGRAM_USER_IDS=
+```
+
+Start the bot:
+
+```bash
 python -m app.main
 ```
 
-For Windows PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`. The example environment file is configured for the NAS, so replace its `DATABASE_URL` with the SQLite value shown above for a local run. No database server is needed locally. To keep the bot private, set one or more numeric Telegram IDs in `ALLOWED_TELEGRAM_USER_IDS`, separated by commas. Each allowed account has completely separate records.
+Send this in a private Telegram chat with your bot:
+
+```text
+/myid
+```
+
+Put the returned ID in `.env`:
+
+```dotenv
+ADMIN_TELEGRAM_USER_IDS=YOUR_NUMERIC_TELEGRAM_ID
+```
+
+Stop the local process with **Ctrl+C** and run the start command again. Press **Start** in Telegram to see **Manage users**. No database server is needed; each user's records are stored separately in SQLite. Access stays closed until an admin or approved user is configured.
 
 ## Run on a UGREEN NAS
 
@@ -52,8 +88,14 @@ The guide includes two ways to deploy and update your own copy:
 
 Both keep health records in `postgres-data` on the NAS, separate from the bot container. The automatic workflow publishes to the GitHub repository owner's own container package.
 
+## Manage users in Telegram
+
+New users press **Start → Request access**. Admins receive **Approve / Reject** buttons and can open **Manage users** (or `/admin`) to review requests, list users, add IDs, and remove access. Changes take effect immediately without restarting.
+
+Rejected requests are deleted, with no rejection history kept in the database. Removing access stops reminders and tracking but preserves health records. Rejected or removed users may request again. See [admin setup and migration](SETUP.md#5-set-up-the-admin-and-approve-users) for the one-time admin configuration and importing existing allowed IDs.
+
 ## Privacy and limits
 
-Use the bot in one-to-one chats: the current code does not block group chats, where replies could expose your records to other participants.
+Tracking, access requests, and admin controls work only in private chats.
 
 Meal nutrition is an estimate, especially from photos. The bot asks the user to confirm every estimate. Weight and meal data are stored in your configured database; meal photos are analyzed through the OpenAI API but are not stored locally by this application.

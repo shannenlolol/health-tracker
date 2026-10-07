@@ -5,11 +5,16 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.config import settings
+from app.services.access import has_access, refresh_identity
+from app.bot.keyboards import menu_for
+from app.bot.access_handlers import (
+    access_prompt, admin_menu, admin_action, request_action, my_id, add_user_message, private_chat,
+)
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import make_chart
 from app.services.tracker import (
@@ -29,30 +34,19 @@ from app.services.tracker import (
 
 
 log = logging.getLogger(__name__)
-MENU = ReplyKeyboardMarkup(
-    [
-        ["⚖️ Log weight", "🍽️ Log meal"],
-        ["🔎 Check meal", "📋 Today"],
-        ["📈 Progress", "🎯 Calorie target"],
-        ["⏰ Reminders", "↩️ Undo"],
-        ["❓ Help"],
-    ],
-    resize_keyboard=True,
-    is_persistent=True,
-    input_field_placeholder="Choose an option",
-)
 
 
 def allowed(update: Update) -> bool:
-    return not settings.allowed_telegram_user_ids or update.effective_user.id in settings.allowed_telegram_user_ids
+    return bool(update.effective_user and private_chat(update) and has_access(update.effective_user.id))
 
 
 def private(handler):
     @wraps(handler)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if not allowed(update):
-            if update.effective_message:
-                await update.effective_message.reply_text("Sorry, this is a private health tracker.")
+        # Read current grants for every update; caching at startup would delay
+        # revocation. Keep synchronous database work off Telegram's event loop.
+        if not await asyncio.to_thread(allowed, update):
+            await access_prompt(update, context)
             return
         return await handler(update, context, *args, **kwargs)
 
@@ -65,14 +59,16 @@ def user_for(update: Update):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not allowed(update):
-        await update.message.reply_text("Sorry, this is a private health tracker.")
+    if not await asyncio.to_thread(allowed, update):
+        await access_prompt(update, context)
         return
     context.user_data.clear()
+    person = update.effective_user
+    await asyncio.to_thread(refresh_identity, person.id, person.full_name, person.username)
     user = user_for(update)
     await update.message.reply_text(
         f"Hi {user.name} 👋\n\nI can keep track of your weight and meals. Tap one of the large buttons below to begin.",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -92,14 +88,14 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
         "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, or /undo.",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
 @private
 async def ask_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["waiting_for"] = "weight"
-    await update.message.reply_text("What is your weight today?\n\nType a number in kg, for example: 82.4", reply_markup=MENU)
+    await update.message.reply_text("What is your weight today?\n\nType a number in kg, for example: 82.4", reply_markup=menu_for(update.effective_user.id))
 
 
 @private
@@ -120,14 +116,14 @@ async def save_weight(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: s
         return
     entry = await asyncio.to_thread(add_weight, user_for(update).id, kg)
     context.user_data.pop("waiting_for", None)
-    await update.message.reply_text(f"✅ Saved: {entry.weight_kg:g} kg\n\nGood job keeping track.", reply_markup=MENU)
+    await update.message.reply_text(f"✅ Saved: {entry.weight_kg:g} kg\n\nGood job keeping track.", reply_markup=menu_for(update.effective_user.id))
 
 
 async def ask_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["waiting_for"] = "meal"
     await update.message.reply_text(
         "What did you eat?\n\nType it, for example:\nchicken rice, less rice\n\nOr send me a clear photo of the meal.",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -164,7 +160,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "What food would you like me to check?\n\n"
         "Type the food and portion, for example: kopi O, one cup",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -182,7 +178,7 @@ async def check_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, text: s
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(
         estimate_text(estimate).replace("Does this look right?", "ℹ️ This was only a check. Nothing was saved."),
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -196,7 +192,7 @@ async def calorie_target_command(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(
         f"Your current daily target is {user.daily_calorie_target:,} kcal.\n\n"
         "What would you like to change it to? Type a number, for example: 1800",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -215,7 +211,7 @@ async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(
         f"✅ Daily calorie target updated to {target:,} kcal.",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -287,7 +283,7 @@ async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal
     display = reminder_time or "None"
     await update.message.reply_text(
         f"✅ {meal_type.title()} reminder set to {display}.",
-        reply_markup=MENU,
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -383,6 +379,8 @@ async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 def day_bounds() -> tuple[datetime, datetime]:
+    # Build both midnights in local time before converting to UTC so days with
+    # daylight-saving changes are not assumed to be exactly 24 hours long.
     tz = ZoneInfo(settings.timezone)
     local_now = datetime.now(tz)
     start = datetime.combine(local_now.date(), time.min, tzinfo=tz)
@@ -395,7 +393,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = user_for(update)
     meals, weights = await asyncio.to_thread(today_entries, user.id, *day_bounds())
     if not meals and not weights:
-        await update.effective_message.reply_text("Nothing logged today yet.\n\nTap “Log weight” or “Log meal” when you’re ready.", reply_markup=MENU)
+        await update.effective_message.reply_text("Nothing logged today yet.\n\nTap “Log weight” or “Log meal” when you’re ready.", reply_markup=menu_for(update.effective_user.id))
         return
     lines = ["📋 Today"]
     if weights:
@@ -405,7 +403,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.extend(f"• {m.description} — {m.estimated_calories:,} kcal" for m in meals)
         calories = sum(m.estimated_calories for m in meals)
         lines += [f"\n🔥 Total: {calories:,} / {user.daily_calorie_target:,} kcal", f"🥩 Protein: {sum(m.protein_g for m in meals):g} g"]
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=MENU)
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=menu_for(update.effective_user.id))
 
 
 @private
@@ -418,14 +416,14 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if len(weights) >= 2:
         change = weights[-1].weight_kg - weights[0].weight_kg
         caption += f"\nWeight change: {change:+.1f} kg"
-    await update.effective_message.reply_photo(chart, caption=caption, reply_markup=MENU)
+    await update.effective_message.reply_photo(chart, caption=caption, reply_markup=menu_for(update.effective_user.id))
 
 
 @private
 async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     entry = await asyncio.to_thread(last_entry, user_for(update).id)
     if not entry:
-        await update.effective_message.reply_text("There is nothing to undo yet.", reply_markup=MENU)
+        await update.effective_message.reply_text("There is nothing to undo yet.", reply_markup=menu_for(update.effective_user.id))
         return
     kind, item = entry
     label = item.description if kind == "meal" else f"{item.weight_kg:g} kg"
@@ -457,7 +455,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📋 Today": today, "📈 Progress": progress, "🎯 Calorie target": calorie_target_command,
         "⏰ Reminders": reminders_command, "↩️ Undo": undo, "❓ Help": help_message,
     }
-    if text in actions:
+    if text == "👥 Manage users":
+        await admin_menu(update, context)
+    elif context.user_data.get("waiting_for") == "admin_add":
+        await add_user_message(update, context)
+    elif text in actions:
         await actions[text](update, context)
     elif context.user_data.get("waiting_for") == "weight":
         await save_weight(update, context, text)
@@ -486,11 +488,15 @@ async def reminder_loop(application: Application) -> None:
             due_reminders, now.date(), now.strftime("%H:%M"), start, end
         )
         for reminder_id, telegram_user_id, meal_type in reminders:
+            # Reminder settings survive removal, but delivery requires a current
+            # grant. Check here too because this loop bypasses message handlers.
+            if not await asyncio.to_thread(has_access, telegram_user_id):
+                continue
             try:
                 await application.bot.send_message(
                     telegram_user_id,
                     f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
-                    reply_markup=MENU,
+                    reply_markup=menu_for(telegram_user_id),
                 )
             except Exception:
                 log.exception("Could not send %s reminder to user %s", meal_type, telegram_user_id)
@@ -520,6 +526,10 @@ def build_application() -> Application:
         .build()
     )
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myid", my_id))
+    app.add_handler(CommandHandler("admin", admin_menu))
+    app.add_handler(CallbackQueryHandler(request_action, pattern=r"^access:request$"))
+    app.add_handler(CallbackQueryHandler(admin_action, pattern=r"^admin:"))
     app.add_handler(CommandHandler("help", help_message))
     app.add_handler(CommandHandler("weight", weight_command))
     app.add_handler(CommandHandler("check", check_command))

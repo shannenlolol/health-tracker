@@ -131,6 +131,14 @@ Each edit uses one meal estimate from your daily allowance. Tap **Cancel** at an
 
 > **Screenshot placeholder — Edit meal:** Meal list → corrected estimate → "Lunch updated".
 
+### 2j. Download your data
+
+**2j(i)** Send `/export`.
+
+**2j(ii)** The bot replies with a CSV file of all your meals and weights, oldest first, with times in the bot's timezone. Open it in Excel, Numbers, or Google Sheets.
+
+> **Screenshot placeholder — Export:** `/export` → file in chat → opened in a spreadsheet.
+
 ## 3. What admins can do
 
 Admins have all the tracking features plus **👥 Manage users**. Routine access changes take effect immediately, without editing files or restarting the NAS bot.
@@ -186,6 +194,7 @@ Rejected or removed users can request again. Admins are configured in the NAS se
 - **Separate user records:** users see their own health data. The admin menu manages access; it does not provide a view of other users' health logs.
 - **Owner-managed storage:** records live in PostgreSQL on the NAS. Someone with database access can inspect them.
 - **External services:** messages pass through Telegram; meal descriptions and photos are sent to OpenAI for analysis. The owner supplies the API key for everyone's meal estimates.
+- **Your own copy:** any user with access can send `/export` to download their meals and weights as a CSV file.
 - **Photos:** the application does not save photo files on the NAS, but a saved photo meal includes its Telegram file ID.
 - **Estimates:** AI nutrition values are approximate. Review the food and portions before saving.
 - **Availability:** the NAS must stay on and connected. There is no need to keep a laptop running.

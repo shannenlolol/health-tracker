@@ -20,12 +20,14 @@ from app.bot.access_handlers import (
     access_prompt, admin_menu, admin_action, request_action, my_id, add_user_message, private_chat,
     notify, management_keyboard,
 )
+from app.services.export import export_csv
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import local_time, make_chart
 from app.services.rate_limit import LimitExceeded, limiter
 from app.services.tracker import (
     add_meal,
     add_weight,
+    all_entries,
     delete_entry,
     due_reminders,
     get_meal,
@@ -151,7 +153,8 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "✏️ Edit meal — fix a saved meal by typing it again\n\n"
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.",
+        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.\n"
+        "Send /export to download all your meals and weights as a spreadsheet file.",
         reply_markup=menu_for(update.effective_user.id),
     )
 
@@ -580,6 +583,33 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_photo(chart, caption=caption, reply_markup=menu_for(update.effective_user.id))
 
 
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    return f"{count} {singular if count == 1 else plural_form or singular + 's'}"
+
+
+@private
+async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("waiting_for", None)
+    meals, weights = await asyncio.to_thread(all_entries, (await user_for(update)).id)
+    if not meals and not weights:
+        await update.effective_message.reply_text(
+            "There is nothing to export yet.", reply_markup=menu_for(update.effective_user.id)
+        )
+        return
+    await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+    data = await asyncio.to_thread(export_csv, meals, weights, settings.timezone)
+    today_local = datetime.now(ZoneInfo(settings.timezone)).date()
+    await update.effective_message.reply_document(
+        data,
+        filename=f"health-tracker-{today_local.isoformat()}.csv",
+        caption=(
+            f"📄 Your data: {plural(len(meals), 'meal')} and {plural(len(weights), 'weight entry', 'weight entries')}.\n\n"
+            f"Open it in Excel, Numbers, or Google Sheets. Times are in {settings.timezone}."
+        ),
+        reply_markup=menu_for(update.effective_user.id),
+    )
+
+
 @private
 async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     entry = await asyncio.to_thread(last_entry, (await user_for(update)).id)
@@ -733,6 +763,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CommandHandler("undo", undo))
     app.add_handler(CommandHandler("edit", edit_meal_menu))
+    app.add_handler(CommandHandler("export", export_data))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
     app.add_handler(CallbackQueryHandler(edit_meal_action, pattern=r"^edit_meal:(pick:\d+|cancel)$"))
     app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))

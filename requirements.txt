@@ -1,4 +1,4 @@
-python-telegram-bot==22.3
+python-telegram-bot[rate-limiter]==22.3
 openai==1.99.9
 SQLAlchemy==2.0.43
 psycopg[binary]==3.2.9

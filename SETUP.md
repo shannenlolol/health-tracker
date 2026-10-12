@@ -421,6 +421,31 @@ sudo docker compose -p health-tracker -f docker-compose.manual.yml exec -T db pg
 
 Use a different backup filename each time to avoid overwriting an earlier backup. A successful dump is not a tested restore; verify recovery with a separate test database before relying on your backup routine.
 
+### 9b. Configure the OpenAI spending limit
+
+Choose a monthly limit that suits your own budget and expected usage. This is an account setting, separate from the bot's daily request quotas; updating the code does not configure it.
+
+1. Open the OpenAI API Platform and select the project used by this bot's API key.
+2. Open the project's limits settings and set its monthly **hard spend limit** to your chosen amount.
+3. Add an email spend alert below the cap, for example at half the limit, if wanted.
+4. Verify that the saved setting is a hard limit, not only an alert. If this project is shared, its limit applies to all usage billed to that project.
+
+[OpenAI's spending-limit documentation](https://developers.openai.com/api/docs/guides/spend-limits) distinguishes alerts from hard limits. Alerts do not stop traffic. A reached hard limit causes affected API requests to fail until the next monthly cycle or a limit increase; enforcement can lag, so recorded spend can slightly exceed the limit.
+
+### 9c. Rate-limit data and upgrades
+
+The bot creates three additional tables automatically: `usage_counters`, `access_attempts`, and `access_request_timings`. Existing tables are not altered. Existing pending requests receive a 14-day grace period from their first startup with this version; subsequent restarts preserve their original expiry.
+
+Use one bot instance per database. Short-term throttles and active request slots are process-local. Back up the database before upgrading as described above.
+
+Run the offline rate-limit tests locally with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests use a temporary in-memory SQLite database and mocked Telegram/OpenAI calls. They do not connect to the NAS or spend API credits.
+
 ## 10. Install code updates
 
 **Run location:** NAS SSH terminal, inside your `health-tracker` project folder. Reconnect and run `cd` as shown in [section 4](#4-connect-to-the-nas-with-ssh) if needed.

@@ -1,8 +1,6 @@
-"""Private-chat enrollment and administrator controls."""
+"""Private-chat enrolment and administrator controls."""
 import asyncio
-from collections import OrderedDict
 import logging
-from time import monotonic
 
 from telegram import InlineKeyboardButton as Button, InlineKeyboardMarkup as Keyboard, Update
 from telegram.error import TelegramError
@@ -11,10 +9,10 @@ from telegram.ext import ContextTypes
 from app.config import settings
 from app.bot.keyboards import menu_for
 from app.services import access
+from app.services.rate_limit import LimitExceeded, limiter
 
 log = logging.getLogger(__name__)
 PAGE_SIZE = 8
-REQUEST_COOLDOWN = 300
 
 
 def private_chat(update: Update) -> bool:
@@ -46,6 +44,8 @@ def person_label(person) -> str:
 
 
 async def access_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not limiter.access_reply(update.effective_user.id):
+        return
     if update.callback_query:
         await update.callback_query.answer()
     if not private_chat(update):
@@ -65,7 +65,7 @@ async def access_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if private_chat(update):
+    if private_chat(update) and limiter.control_reply(update.effective_user.id, "myid_reply"):
         await update.effective_message.reply_text(f"Your Telegram user ID: {update.effective_user.id}")
 
 
@@ -84,9 +84,11 @@ async def request_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not private_chat(update):
         await access_prompt(update, context)
         return
+    uid = update.effective_user.id
+    if not limiter.control_reply(uid, "request_reply"):
+        return
     query = update.callback_query
     await query.answer()
-    uid = update.effective_user.id
     if await asyncio.to_thread(access.has_access, uid):
         await query.edit_message_text("You already have access. Press Start or send /start to open the menu.")
         return
@@ -96,25 +98,18 @@ async def request_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if await asyncio.to_thread(access.pending_request, uid):
         await query.edit_message_text("Your request is awaiting approval.")
         return
-    # Short-lived, bounded spam protection; no persistent rejected-user record.
-    cooldowns = context.bot_data.setdefault("access_cooldowns", OrderedDict())
-    now = monotonic()
-    # Entries are inserted in time order; expired IDs can be discarded from the
-    # front. This memory-only throttle intentionally disappears after a restart.
-    while cooldowns and next(iter(cooldowns.values())) <= now - REQUEST_COOLDOWN:
-        cooldowns.popitem(last=False)
-    if uid in cooldowns:
-        await query.edit_message_text("Please wait five minutes between requests, then send /start to try again.")
-        return
     person = update.effective_user
-    request = await asyncio.to_thread(access.request_access, uid, person.full_name, person.username)
+    try:
+        request = await asyncio.to_thread(access.request_access, uid, person.full_name, person.username)
+    except LimitExceeded as exc:
+        await query.edit_message_text(str(exc))
+        return
     if request is None:
         await query.edit_message_text("Your request is already pending or your access has changed. Send /start to check.")
         return
-    cooldowns[uid] = now
-    if len(cooldowns) > 10000:
-        cooldowns.popitem(last=False)
     await query.edit_message_text("Your request has been sent. You'll be notified when it is reviewed.")
+    if not limiter.access_alert():
+        return
     for admin_id in settings.admin_telegram_user_ids:
         await notify(context, admin_id,
                      f"{person_label(request)} has requested access.\n\nAdd this user to the allowed users?",
@@ -124,6 +119,8 @@ async def request_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def require_admin(update: Update) -> bool:
     if private_chat(update) and access.is_admin(update.effective_user.id):
         return True
+    if not update.effective_user or not limiter.control_reply(update.effective_user.id, "admin_reply"):
+        return False
     if update.callback_query:
         await update.callback_query.answer("Only an administrator can do this in a private chat.", show_alert=True)
     elif update.effective_message:
@@ -194,6 +191,7 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.edit_message_text("This request has already been handled.", reply_markup=management_keyboard())
             return
         approved = action == "approve"
+        limiter.clear_access_silence(request.telegram_user_id)
         context.application.drop_user_data(request.telegram_user_id)
         delivered = await notify(
             context, request.telegram_user_id,
@@ -222,6 +220,7 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.edit_message_text("Access was already changed, or this is a configured admin.", reply_markup=management_keyboard())
             return
         # Discard unfinished meal/undo state so reapproval starts a fresh session.
+        limiter.clear_access_silence(uid)
         context.application.drop_user_data(uid)
         await notify(context, uid, "Your access has been removed. Your existing records have been kept.")
         await query.edit_message_text("Access removed. Records kept.", reply_markup=management_keyboard())
@@ -242,6 +241,7 @@ async def add_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     added = await asyncio.to_thread(access.add_user, uid)
     context.user_data.pop("waiting_for", None)
     if added:
+        limiter.clear_access_silence(uid)
         context.application.drop_user_data(uid)
         await notify(context, uid, "✅ You're approved! Choose an option below.", menu_for(uid))
     await update.effective_message.reply_text(

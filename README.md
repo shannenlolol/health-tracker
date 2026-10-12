@@ -125,7 +125,7 @@ Admins have all the tracking features plus **👥 Manage users**. Routine access
 | Admin option | Result |
 | --- | --- |
 | Approve a request | Grants access and sends the user their menu. |
-| Reject a request | Notifies the user and deletes the pending request. No rejection history is kept. |
+| Reject a request | Notifies the user and deletes the pending request. A request timestamp is kept for up to 24 hours to prevent repeated sign-ups. |
 | Pending requests | Reviews requests, including those whose notification was not delivered. |
 | Allowed users | Lists approved users and configured admin IDs. |
 | Add user | Grants access using a numeric Telegram user ID. |
@@ -176,6 +176,24 @@ Rejected or removed users can request again. Admins are configured in the NAS se
 - **Photos:** the application does not save photo files on the NAS, but a saved photo meal includes its Telegram file ID.
 - **Estimates:** AI nutrition values are approximate. Review the food and portions before saving.
 - **Availability:** the NAS must stay on and connected. There is no need to keep a laptop running.
+
+### Rate limits
+
+Default limits can be changed using the settings in `.env.example`:
+
+- **Meal estimates:** 5 text requests per minute and 50 per day; 3 photos per minute and 20 per day. Checks and corrections count towards the same text quota. Accepted attempts count even if analysis fails.
+- **Bot-wide limits:** 300 estimates per day, with at most 3 in progress and only one per user. Admins bypass personal quotas, but still count towards the global limit. Admins receive one notification attempt each when the daily ceiling is reached.
+- **Input size:** meal text is limited to 300 characters and photo captions to 200. Photos use Telegram's middle-sized version.
+- **Message floods:** after 20 updates in 30 seconds, the bot sends one warning and ignores that user's updates for 60 seconds. Admins are exempt.
+- **People without access:** automatic access prompts are limited to one every 10 minutes. Explicit Request access and `/myid` controls each have a separate 10-minute reply limit so initial enrolment still works. Unauthorised admin controls also have their own reply limit.
+- **Access requests:** at most 3 per person in a rolling 24 hours, at least 5 minutes apart; at most 10 globally per hour and 25 pending. Pending requests expire after 14 days. The first 5 requests in a 10-minute alert window notify admins individually; further requests are included in one summary when the window ends.
+- **Telegram sends:** outgoing messages are throttled, and rate-limit responses are retried up to twice.
+
+Daily AI quotas reset at midnight in the configured timezone. Daily counters and access-request limits survive restarts; short-term message/minute throttles and grouped alerts reset. Request timestamps contain only Telegram IDs and times and are purged after 24 hours during maintenance. Current-day AI counters store IDs and counts; previous days are removed on the next accepted estimate. These controls assume one bot process.
+
+The current bot still processes Telegram updates sequentially. The concurrency limits also protect overlapping calls, but enabling concurrent update processing is a separate planned change.
+
+The owner must configure a separate **monthly project hard spending limit** of their choosing in the OpenAI account; the bot cannot set it through `.env`. A spend alert alone does not stop requests. See [the setup guide](SETUP.md#9b-configure-the-openai-spending-limit).
 
 ## 5. Want to host your own?
 

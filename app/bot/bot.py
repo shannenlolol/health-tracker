@@ -7,16 +7,21 @@ from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    AIORateLimiter, Application, ApplicationHandlerStop, CallbackQueryHandler,
+    CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters,
+)
 
 from app.config import settings
 from app.services.access import has_access, refresh_identity
 from app.bot.keyboards import menu_for
 from app.bot.access_handlers import (
     access_prompt, admin_menu, admin_action, request_action, my_id, add_user_message, private_chat,
+    notify, management_keyboard,
 )
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import make_chart
+from app.services.rate_limit import LimitExceeded, limiter
 from app.services.tracker import (
     add_meal,
     add_weight,
@@ -36,6 +41,60 @@ from app.services.tracker import (
 log = logging.getLogger(__name__)
 
 
+async def guard_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Run once before dispatch: nested menu handlers must not count an update
+    # twice, and access callbacks and /myid need the same flood protection.
+    if not private_chat(update):
+        raise ApplicationHandlerStop
+    decision = limiter.message(update.effective_user.id)
+    if decision != "allow":
+        if decision == "warn":
+            await update.effective_message.reply_text(
+                f"Too many messages. Please wait {settings.message_block_seconds} seconds."
+            )
+        raise ApplicationHandlerStop
+
+
+async def notify_global_limit(context):
+    if await asyncio.to_thread(limiter.claim_global_alert):
+        for admin_id in settings.admin_telegram_user_ids:
+            await notify(context, admin_id, "The daily meal estimate limit has been reached. Estimates resume at midnight.")
+
+
+def ai_guard(kind):
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(update, context, *args, **kwargs):
+            if not settings.openai_api_key:
+                return await handler(update, context, *args, **kwargs)
+            content = (update.message.caption or "") if kind == "photo" else (args[0] if args else kwargs["text"])
+            uid = update.effective_user.id
+            # Wait for a cancelled worker reservation to settle before releasing
+            # its slot; the database operation itself cannot be cancelled.
+            reservation = asyncio.create_task(asyncio.to_thread(limiter.begin_ai, uid, kind, content))
+            try:
+                await asyncio.shield(reservation)
+            except asyncio.CancelledError:
+                try:
+                    await reservation
+                except Exception:
+                    pass
+                else:
+                    limiter.finish_ai(uid)
+                raise
+            except LimitExceeded as exc:
+                await update.effective_message.reply_text(str(exc))
+                await notify_global_limit(context)
+                return
+            try:
+                await notify_global_limit(context)
+                return await handler(update, context, *args, **kwargs)
+            finally:
+                limiter.finish_ai(uid)
+        return wrapped
+    return decorate
+
+
 def allowed(update: Update) -> bool:
     return bool(update.effective_user and private_chat(update) and has_access(update.effective_user.id))
 
@@ -43,6 +102,8 @@ def allowed(update: Update) -> bool:
 def private(handler):
     @wraps(handler)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        if update.effective_user and limiter.access_silenced(update.effective_user.id):
+            return
         # Read current grants for every update; caching at startup would delay
         # revocation. Keep synchronous database work off Telegram's event loop.
         if not await asyncio.to_thread(allowed, update):
@@ -58,10 +119,8 @@ def user_for(update: Update):
     return get_user(person.id, person.first_name or "User")
 
 
+@private
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await asyncio.to_thread(allowed, update):
-        await access_prompt(update, context)
-        return
     context.user_data.clear()
     person = update.effective_user
     await asyncio.to_thread(refresh_identity, person.id, person.full_name, person.username)
@@ -137,6 +196,7 @@ def estimate_text(estimate: MealEstimate) -> str:
     )
 
 
+@ai_guard("text")
 async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     if not settings.openai_api_key:
         await update.message.reply_text("Meal estimates are not set up yet. Please ask the person who set up this bot to add the OpenAI key.")
@@ -164,6 +224,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+@ai_guard("text")
 async def check_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     if not settings.openai_api_key:
         await update.message.reply_text("Meal estimates are not set up yet. Please ask the person who set up this bot to add the OpenAI key.")
@@ -288,20 +349,21 @@ async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal
 
 
 @private
+@ai_guard("photo")
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not settings.openai_api_key:
         await update.message.reply_text("Meal photos are not set up yet. Please ask the person who set up this bot to add the OpenAI key.")
         return
     status = await update.message.reply_text("🔎 Looking at your meal… This may take a few seconds.")
     try:
-        image = await update.message.photo[-1].get_file()
+        image = await update.message.photo[len(update.message.photo) // 2].get_file()
         data = bytes(await image.download_as_bytearray())
         estimate = await MealAnalyzer().from_image(data, "image/jpeg", update.message.caption or "")
     except Exception:
         log.exception("Meal image analysis failed")
         await status.edit_text("I couldn’t read that photo. Please try a brighter, closer photo, or type the meal instead.")
         return
-    context.user_data["pending_image_file_id"] = update.message.photo[-1].file_id
+    context.user_data["pending_image_file_id"] = update.message.photo[len(update.message.photo) // 2].file_id
     await status.delete()
     await show_estimate(update, context, estimate)
 
@@ -478,9 +540,33 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     log.exception("Unhandled Telegram update", exc_info=context.error)
 
 
+def clean_up_access_requests():
+    from app.db.database import SessionLocal
+    with limiter.lock, SessionLocal.begin() as db:
+        limiter.expire_requests(db)
+
+
 async def reminder_loop(application: Application) -> None:
     tz = ZoneInfo(settings.timezone)
     while True:
+        # Maintenance also runs during quiet periods, so requests really expire
+        # and grouped alerts are delivered even if no further sign-ups arrive.
+        # A database failure here must not stop the loop, or reminders would
+        # silently cease until the next restart.
+        try:
+            await asyncio.to_thread(clean_up_access_requests)
+        except Exception:
+            log.exception("Access request clean-up failed")
+        count = limiter.take_access_summary()
+        if count:
+            for admin_id in settings.admin_telegram_user_ids:
+                try:
+                    await application.bot.send_message(
+                        admin_id, f"{count} new access requests in the last alert window. Open Pending requests.",
+                        reply_markup=management_keyboard(),
+                    )
+                except Exception:
+                    log.exception("Could not send grouped access notification")
         now = datetime.now(tz)
         start = datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(timezone.utc)
         end = start + timedelta(days=1)
@@ -521,10 +607,15 @@ def build_application() -> Application:
     app = (
         Application.builder()
         .token(settings.telegram_bot_token)
+        .rate_limiter(AIORateLimiter(
+            overall_max_rate=settings.telegram_messages_per_second,
+            max_retries=settings.telegram_rate_limit_retries,
+        ))
         .post_init(start_reminder_loop)
         .post_shutdown(stop_reminder_loop)
         .build()
     )
+    app.add_handler(TypeHandler(Update, guard_updates), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", my_id))
     app.add_handler(CommandHandler("admin", admin_menu))

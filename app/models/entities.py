@@ -80,3 +80,29 @@ class AccessMigration(Base):
     __tablename__ = "access_migrations"
 
     name: Mapped[str] = mapped_column(String(80), primary_key=True)
+
+
+class UsageCounter(Base):
+    __tablename__ = "usage_counters"
+
+    # Telegram IDs are positive; zero represents bot-wide usage and alert claims.
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(30), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AccessRequestTiming(Base):
+    __tablename__ = "access_request_timings"
+
+    # A separate table lets existing deployments upgrade using create_all.
+    token: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AccessAttempt(Base):
+    __tablename__ = "access_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

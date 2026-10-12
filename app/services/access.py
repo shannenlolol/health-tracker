@@ -1,4 +1,4 @@
-"""Persist only pending requests and current grants, never rejected-user history."""
+"""Access grants, pending requests, and short-lived anti-abuse counters."""
 from uuid import uuid4
 
 from sqlalchemy import delete, select
@@ -6,7 +6,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db.database import SessionLocal
-from app.models.entities import AccessMigration, AccessRequest, AllowedUser, User
+from app.models.entities import AccessMigration, AccessRequest, AccessRequestTiming, AllowedUser, User
+from app.services.rate_limit import limiter
 
 
 def is_admin(telegram_user_id: int) -> bool:
@@ -23,7 +24,8 @@ def has_access(telegram_user_id: int) -> bool:
 
 def initialize_access() -> None:
     """Import explicit legacy IDs once; later restarts must not undo revocations."""
-    with SessionLocal.begin() as db:
+    with limiter.lock, SessionLocal.begin() as db:
+        limiter.expire_requests(db)
         if db.get(AccessMigration, "legacy_allowlist_v1"):
             return
         # Allow /myid bootstrap without consuming the one-time import.
@@ -40,7 +42,7 @@ def initialize_access() -> None:
 
 
 def refresh_identity(uid: int, name: str, username: str | None) -> None:
-    with SessionLocal.begin() as db:
+    with limiter.lock, SessionLocal.begin() as db:
         grant = db.get(AllowedUser, uid)
         if grant:
             grant.name = name[:120]
@@ -51,9 +53,14 @@ def request_access(uid: int, name: str, username: str | None) -> AccessRequest |
     if has_access(uid) or not settings.admin_telegram_user_ids:
         return None
     try:
-        with SessionLocal.begin() as db:
+        with limiter.lock, SessionLocal.begin() as db:
+            limiter.expire_requests(db)
+            if db.scalar(select(AccessRequest).where(AccessRequest.telegram_user_id == uid)):
+                return None
+            limiter.record_request(db, uid)
             request = AccessRequest(token=uuid4().hex, telegram_user_id=uid, name=name[:120], username=username)
             db.add(request)
+            db.add(AccessRequestTiming(token=request.token, created_at=limiter.utcnow()))
         return request
     except IntegrityError:
         # The unique user ID also protects against duplicate requests.
@@ -61,12 +68,14 @@ def request_access(uid: int, name: str, username: str | None) -> AccessRequest |
 
 
 def pending_request(uid: int) -> AccessRequest | None:
-    with SessionLocal() as db:
+    with limiter.lock, SessionLocal.begin() as db:
+        limiter.expire_requests(db)
         return db.scalar(select(AccessRequest).where(AccessRequest.telegram_user_id == uid))
 
 
 def pending_requests(offset: int = 0, limit: int = 8) -> list[AccessRequest]:
-    with SessionLocal() as db:
+    with limiter.lock, SessionLocal.begin() as db:
+        limiter.expire_requests(db)
         return list(db.scalars(select(AccessRequest).order_by(AccessRequest.telegram_user_id).offset(offset).limit(limit)))
 
 
@@ -81,11 +90,13 @@ def decide_request(token: str, approve: bool) -> AccessRequest | None:
     The token identifies this request, not just its user. An old Telegram button
     must not approve or reject a later request from the same account.
     """
-    with SessionLocal.begin() as db:
+    with limiter.lock, SessionLocal.begin() as db:
+        limiter.expire_requests(db)
         # Atomic consumption makes stale/double decisions harmless on both databases.
         request = db.scalar(delete(AccessRequest).where(AccessRequest.token == token).returning(AccessRequest))
         if request is None:
             return None
+        db.execute(delete(AccessRequestTiming).where(AccessRequestTiming.token == token))
         if approve and not db.get(AllowedUser, request.telegram_user_id):
             db.add(AllowedUser(telegram_user_id=request.telegram_user_id, name=request.name,
                                username=request.username, token=uuid4().hex))
@@ -95,11 +106,14 @@ def decide_request(token: str, approve: bool) -> AccessRequest | None:
 def add_user(uid: int) -> bool:
     if not 0 < uid < 2**63:
         raise ValueError("Enter a positive numeric Telegram user ID.")
-    with SessionLocal.begin() as db:
+    with limiter.lock, SessionLocal.begin() as db:
         if is_admin(uid) or db.get(AllowedUser, uid):
             return False
+        limiter.expire_requests(db)
         # Preapproval resolves any pending request too, invalidating its buttons.
         request = db.scalar(delete(AccessRequest).where(AccessRequest.telegram_user_id == uid).returning(AccessRequest))
+        if request:
+            db.execute(delete(AccessRequestTiming).where(AccessRequestTiming.token == request.token))
         user = db.scalar(select(User).where(User.telegram_user_id == uid))
         db.add(AllowedUser(telegram_user_id=uid, name=request.name if request else user.name if user else "User",
                            username=request.username if request else None, token=uuid4().hex))
@@ -117,7 +131,7 @@ def remove_user(token: str) -> int | None:
     Access grants have no cascading relationship to health records. Deleting
     one deliberately preserves the user's meals, weights, and preferences.
     """
-    with SessionLocal.begin() as db:
+    with limiter.lock, SessionLocal.begin() as db:
         grant = db.scalar(select(AllowedUser).where(AllowedUser.token == token))
         if grant is None or is_admin(grant.telegram_user_id):
             return None

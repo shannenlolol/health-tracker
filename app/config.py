@@ -14,6 +14,13 @@ def positive_setting(name: str, default: int) -> int:
     return value
 
 
+def non_negative_setting(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be zero or a positive integer")
+    return value
+
+
 def parse_telegram_user_ids(*values: str | None, setting_name: str = "ALLOWED_TELEGRAM_USER_IDS") -> frozenset[int]:
     ids: set[int] = set()
     for value in values:
@@ -41,6 +48,8 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///health_tracker.db")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    openai_timeout_seconds: int = positive_setting("OPENAI_TIMEOUT_SECONDS", 30)
+    openai_max_retries: int = non_negative_setting("OPENAI_MAX_RETRIES", 2)
     timezone: str = os.getenv("TIMEZONE", "Asia/Singapore")
     daily_calorie_target: int = int(os.getenv("DAILY_CALORIE_TARGET", "2000"))
     ai_text_per_minute: int = positive_setting("AI_TEXT_PER_MINUTE", 5)

@@ -1,9 +1,13 @@
 import base64
+from functools import cache
+import logging
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.config import settings
+
+log = logging.getLogger(__name__)
 
 
 class MealEstimate(BaseModel):
@@ -21,9 +25,29 @@ Keep the description plain and under 80 characters. Round calories to the neares
 macros to whole grams."""
 
 
+@cache
+def shared_client() -> AsyncOpenAI:
+    # Created on first use rather than at import: AsyncOpenAI refuses to start
+    # without a key, and the bot must still run when estimates are not set up.
+    # Reusing one client keeps its HTTP connections open between estimates.
+    return AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+        max_retries=settings.openai_max_retries,
+    )
+
+
+def log_usage(kind: str, response) -> MealEstimate:
+    usage = response.usage
+    if usage:
+        log.info("OpenAI %s estimate used %s input + %s output = %s tokens",
+                 kind, usage.input_tokens, usage.output_tokens, usage.total_tokens)
+    return response.output_parsed
+
+
 class MealAnalyzer:
     def __init__(self) -> None:
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.client = shared_client()
 
     async def from_text(self, description: str) -> MealEstimate:
         response = await self.client.responses.parse(
@@ -34,7 +58,7 @@ class MealAnalyzer:
             ],
             text_format=MealEstimate,
         )
-        return response.output_parsed
+        return log_usage("text", response)
 
     async def from_image(self, image: bytes, mime_type: str, caption: str = "") -> MealEstimate:
         encoded = base64.b64encode(image).decode("ascii")
@@ -52,4 +76,4 @@ class MealAnalyzer:
             ],
             text_format=MealEstimate,
         )
-        return response.output_parsed
+        return log_usage("photo", response)

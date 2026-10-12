@@ -9,3 +9,5 @@ __pycache__/
 progress-*.png
 postgres-data/
 *.backup
+AGENTS.md
+TODO.md

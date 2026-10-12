@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.models import Meal, MealReminder, Weight
 from app.services import tracker
@@ -52,6 +52,30 @@ def test_due_reminders_sent_once_and_only_when_meal_missing(sessions):
     tracker.mark_reminder_sent(due[0][0], DAY)
     assert tracker.due_reminders(DAY, '08:00', START, END) == []
     assert tracker.due_reminders(DAY, '08:01', START, END) == []
+
+
+def test_due_reminders_query_count_does_not_grow_with_reminders(sessions):
+    engine = sessions.kw['bind']
+    selects = []
+
+    def count_select(conn, cursor, statement, *args):
+        if statement.lstrip().upper().startswith('SELECT'):
+            selects.append(statement)
+
+    def selects_for(user_count):
+        for uid in range(user_count):
+            user = tracker.get_user(100 + uid + user_count * 1000, 'User')
+            tracker.set_reminder(user.id, 'breakfast', f'07:{user_count:02d}')
+        selects.clear()
+        due = tracker.due_reminders(DAY, f'07:{user_count:02d}', START, END)
+        assert len(due) == user_count
+        return len(selects)
+
+    event.listen(engine, 'before_cursor_execute', count_select)
+    try:
+        assert selects_for(1) == selects_for(10) == 1
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_select)
 
 
 def test_unsent_reminder_is_retried_and_reset_by_new_time(sessions):

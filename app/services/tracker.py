@@ -113,6 +113,33 @@ def add_meal(user_id: int, estimate: MealEstimate, meal_type: str, image_file_id
         return meal
 
 
+def recent_meals(user_id: int, limit: int = 5) -> list[Meal]:
+    with SessionLocal() as db:
+        return list(db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(limit)))
+
+
+def get_meal(user_id: int, meal_id: int) -> Meal | None:
+    """Return the meal only if it belongs to this user; button data can't be trusted."""
+    with SessionLocal() as db:
+        return db.scalar(select(Meal).where(Meal.id == meal_id, Meal.user_id == user_id))
+
+
+def update_meal(user_id: int, meal_id: int, estimate: MealEstimate, meal_type: str) -> Meal | None:
+    """Replace a saved meal's estimate, keeping its original time and photo.
+
+    Returns None if the meal was removed (e.g. with Undo) while being edited.
+    """
+    with SessionLocal() as db:
+        meal = db.scalar(select(Meal).where(Meal.id == meal_id, Meal.user_id == user_id))
+        if meal is None:
+            return None
+        for field, value in estimate.model_dump().items():
+            setattr(meal, field, value)
+        meal.meal_type = meal_type
+        db.commit()
+        return meal
+
+
 def today_entries(user_id: int, start_utc: datetime, end_utc: datetime) -> tuple[list[Meal], list[Weight]]:
     with SessionLocal() as db:
         meals = list(db.scalars(select(Meal).where(Meal.user_id == user_id, Meal.recorded_at >= start_utc, Meal.recorded_at < end_utc).order_by(Meal.recorded_at)))

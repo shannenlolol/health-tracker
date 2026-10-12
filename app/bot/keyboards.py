@@ -8,7 +8,7 @@ MENU = ReplyKeyboardMarkup(
         ["🔎 Check meal", "📋 Today"],
         ["📈 Progress", "🎯 Calorie target"],
         ["⏰ Reminders", "↩️ Undo"],
-        ["❓ Help"],
+        ["✏️ Edit meal", "❓ Help"],
     ],
     resize_keyboard=True,
     is_persistent=True,

@@ -61,28 +61,30 @@ def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_ut
     only after Telegram accepts them, so failed sends aren't recorded as sent.
     """
     due: list[tuple[int, int, str]] = []
+    # One query for all reminders: join the owner's Telegram ID and check for a
+    # matching meal with a correlated EXISTS, instead of two queries per reminder.
+    already_logged = (
+        select(Meal.id).where(
+            Meal.user_id == MealReminder.user_id,
+            Meal.meal_type == MealReminder.meal_type,
+            Meal.recorded_at >= start_utc,
+            Meal.recorded_at < end_utc,
+        ).exists()
+    )
     with SessionLocal() as db:
-        reminders = db.scalars(
-            select(MealReminder).where(
+        rows = db.execute(
+            select(MealReminder, User.telegram_user_id, already_logged)
+            .join(User, User.id == MealReminder.user_id)
+            .where(
                 MealReminder.reminder_time == local_time,
                 (MealReminder.last_sent_on.is_(None) | (MealReminder.last_sent_on != local_date)),
             )
         )
-        for reminder in reminders:
-            already_logged = db.scalar(
-                select(Meal.id).where(
-                    Meal.user_id == reminder.user_id,
-                    Meal.meal_type == reminder.meal_type,
-                    Meal.recorded_at >= start_utc,
-                    Meal.recorded_at < end_utc,
-                ).limit(1)
-            )
-            if already_logged is None:
-                telegram_user_id = db.scalar(select(User.telegram_user_id).where(User.id == reminder.user_id))
-                if telegram_user_id is not None:
-                    due.append((reminder.id, telegram_user_id, reminder.meal_type))
-            else:
+        for reminder, telegram_user_id, logged in rows:
+            if logged:
                 reminder.last_sent_on = local_date
+            else:
+                due.append((reminder.id, telegram_user_id, reminder.meal_type))
         db.commit()
     return due
 

@@ -106,3 +106,12 @@ class AccessAttempt(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class UserTimezone(Base):
+    __tablename__ = "user_timezones"
+
+    # A separate table lets existing deployments upgrade using create_all.
+    # Users without a row follow the bot-wide TIMEZONE setting.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    timezone: Mapped[str] = mapped_column(String(64))

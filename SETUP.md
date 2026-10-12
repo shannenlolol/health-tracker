@@ -123,7 +123,7 @@ DAILY_CALORIE_TARGET=2000
 | `DATABASE_URL` | Replace only the password; keep `health_tracker` and `db` as shown. |
 | `ADMIN_TELEGRAM_USER_IDS` | Leave blank until step 6, or enter your numeric ID if known. |
 | `ALLOWED_TELEGRAM_USER_IDS` | Leave blank for a new installation; manage users in Telegram. |
-| `TIMEZONE` | Your timezone, such as `Asia/Singapore`; shared by all users. |
+| `TIMEZONE` | Default timezone, such as `Asia/Singapore`. Users can choose their own with `/timezone`; daily AI quotas always use this one. |
 | `DAILY_CALORIE_TARGET` | Initial target for new users. Users can change their own in Telegram. |
 
 `BOT_IMAGE` in the example file is unused by the manual method. Keep `.env` private and out of GitHub. Leaving the access settings blank keeps tracking closed while you finish setup.
@@ -348,6 +348,7 @@ This lists the tables and starts a read-only transaction for the inspection belo
 | `weights` | Weight entries linked to a tracking user. |
 | `meals` | Descriptions, meal types, nutrition estimates, and timestamps. |
 | `meal_reminders` | Per-user meal times and last-sent dates. |
+| `user_timezones` | Timezones chosen with `/timezone`. Users without a row follow `TIMEZONE`. |
 | `allowed_users` | Access grants managed through Telegram. |
 | `access_requests` | Requests waiting for an admin decision. |
 | `access_migrations` | Marker for the one-time legacy allowlist import. |
@@ -384,7 +385,7 @@ ORDER BY w.recorded_at DESC
 LIMIT 20;
 ```
 
-For one person, add `WHERE u.telegram_user_id = 123456789` before `ORDER BY`, replacing the example ID. Database timestamps may display in UTC; the bot uses `TIMEZONE` for daily summaries.
+For one person, add `WHERE u.telegram_user_id = 123456789` before `ORDER BY`, replacing the example ID. Database timestamps may display in UTC; the bot uses each user's timezone (or `TIMEZONE`) for daily summaries.
 
 > **Screenshot placeholders — Inspect data:** Sample profiles → sample meal rows → sample weight rows.
 
@@ -494,7 +495,7 @@ Uploading source files or restarting a container alone does not install code cha
 | Manage users is missing | Confirm `/myid` matches the configured admin ID, recreate the bot, then send `/start`. |
 | No access-request notification | Each admin must start the bot. Check Manage users → Pending requests. |
 | Meal estimates fail | Check the OpenAI key, API billing, model access, internet connection, and bot logs. |
-| Reminders do not arrive | Check the shared timezone, enabled meal time, current access, and whether that meal type is already logged. |
+| Reminders do not arrive | Check the user's timezone (`/timezone`), enabled meal time, current access, and whether that meal type is already logged. |
 | Telegram reports a polling conflict | Run only one copy for that bot token. Stop any duplicate NAS or local instance. |
 | Settings seem unchanged | Recreate the bot after editing the NAS `.env`; restarting alone is insufficient. |
 

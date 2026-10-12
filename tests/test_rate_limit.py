@@ -389,6 +389,7 @@ class ReviewFixTests(Fixture):
     def test_reminder_loop_survives_clean_up_failure(self):
         app = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         with patch.object(bot, 'clean_up_access_requests', side_effect=RuntimeError('database down')), \
+                patch.object(bot, 'timezones_in_use', return_value={bot.settings.timezone}), \
                 patch.object(bot, 'due_reminders', return_value=[]) as due, \
                 patch.object(bot.asyncio, 'sleep', AsyncMock(side_effect=asyncio.CancelledError)), \
                 self.assertLogs(bot.log, 'ERROR'):

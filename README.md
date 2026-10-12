@@ -191,7 +191,7 @@ Default limits can be changed using the settings in `.env.example`:
 
 Daily AI quotas reset at midnight in the configured timezone. Daily counters and access-request limits survive restarts; short-term message/minute throttles and grouped alerts reset. Request timestamps contain only Telegram IDs and times and are purged after 24 hours during maintenance. Current-day AI counters store IDs and counts; previous days are removed on the next accepted estimate. These controls assume one bot process.
 
-The current bot still processes Telegram updates sequentially. The concurrency limits also protect overlapping calls, but enabling concurrent update processing is a separate planned change.
+The bot handles different users' updates concurrently (up to `CONCURRENT_UPDATES`, default 8), but only one at a time per user. Messages a user sends while the bot is still replying to them are ignored with a short notice. `AI_MAX_CONCURRENT` separately caps how many OpenAI calls run at once.
 
 The owner must configure a separate **monthly project hard spending limit** of their choosing in the OpenAI account; the bot cannot set it through `.env`. A spend alert alone does not stop requests. See [the setup guide](SETUP.md#9b-configure-the-openai-spending-limit).
 

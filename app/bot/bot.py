@@ -15,6 +15,7 @@ from telegram.ext import (
 from app.config import settings
 from app.services.access import has_access, refresh_identity
 from app.bot.keyboards import menu_for
+from app.bot.update_processor import OneUpdatePerUser
 from app.bot.access_handlers import (
     access_prompt, admin_menu, admin_action, request_action, my_id, add_user_message, private_chat,
     notify, management_keyboard,
@@ -114,9 +115,9 @@ def private(handler):
     return wrapped
 
 
-def user_for(update: Update):
+async def user_for(update: Update):
     person = update.effective_user
-    return get_user(person.id, person.first_name or "User")
+    return await asyncio.to_thread(get_user, person.id, person.first_name or "User")
 
 
 @private
@@ -124,7 +125,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     person = update.effective_user
     await asyncio.to_thread(refresh_identity, person.id, person.full_name, person.username)
-    user = user_for(update)
+    user = await user_for(update)
     await update.message.reply_text(
         f"Hi {user.name} 👋\n\nI can keep track of your weight and meals. Tap one of the large buttons below to begin.",
         reply_markup=menu_for(update.effective_user.id),
@@ -173,7 +174,7 @@ async def save_weight(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: s
     except ValueError:
         await update.message.reply_text("That doesn’t look right. Please enter a weight from 30 to 300 kg, like 82.4.")
         return
-    entry = await asyncio.to_thread(add_weight, user_for(update).id, kg)
+    entry = await asyncio.to_thread(add_weight, (await user_for(update)).id, kg)
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(f"✅ Saved: {entry.weight_kg:g} kg\n\nGood job keeping track.", reply_markup=menu_for(update.effective_user.id))
 
@@ -248,7 +249,7 @@ async def calorie_target_command(update: Update, context: ContextTypes.DEFAULT_T
     if context.args:
         await save_calorie_target(update, context, " ".join(context.args))
         return
-    user = user_for(update)
+    user = await user_for(update)
     context.user_data["waiting_for"] = "calorie_target"
     await update.message.reply_text(
         f"Your current daily target is {user.daily_calorie_target:,} kcal.\n\n"
@@ -267,7 +268,7 @@ async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Please enter a daily calorie target from 500 to 10,000 kcal, for example: 1800."
         )
         return
-    user = user_for(update)
+    user = await user_for(update)
     await asyncio.to_thread(update_calorie_target, user.id, target)
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(
@@ -289,7 +290,7 @@ def reminders_keyboard(values: dict[str, str | None]) -> InlineKeyboardMarkup:
 @private
 async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("waiting_for", None)
-    values = await asyncio.to_thread(reminder_settings, user_for(update).id)
+    values = await asyncio.to_thread(reminder_settings, (await user_for(update)).id)
     await update.effective_message.reply_text(
         f"⏰ Meal reminders ({settings.timezone})\n\n"
         "Choose a meal to set its reminder time. A reminder is sent only if that meal has not been logged.",
@@ -303,9 +304,9 @@ async def reminder_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     _, action, meal_type = query.data.split(":")
     if action == "disable":
-        await asyncio.to_thread(set_reminder, user_for(update).id, meal_type, None)
+        await asyncio.to_thread(set_reminder, (await user_for(update)).id, meal_type, None)
         context.user_data.pop("waiting_for", None)
-        values = await asyncio.to_thread(reminder_settings, user_for(update).id)
+        values = await asyncio.to_thread(reminder_settings, (await user_for(update)).id)
         await query.edit_message_text(
             f"✅ {meal_type.title()} reminder set to None.",
             reply_markup=reminders_keyboard(values),
@@ -339,7 +340,7 @@ async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal
             await update.message.reply_text("Please enter a time like 8am, 08:00, or 13:30, or type none.")
             return
         reminder_time = parsed_time.strftime("%H:%M")
-    await asyncio.to_thread(set_reminder, user_for(update).id, meal_type, reminder_time)
+    await asyncio.to_thread(set_reminder, (await user_for(update)).id, meal_type, reminder_time)
     context.user_data.pop("waiting_for", None)
     display = reminder_time or "None"
     await update.message.reply_text(
@@ -416,7 +417,7 @@ async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         meal = await asyncio.to_thread(
             add_meal,
-            user_for(update).id,
+            (await user_for(update)).id,
             MealEstimate(**pending),
             meal_type,
             context.user_data.get("pending_image_file_id"),
@@ -452,7 +453,7 @@ def day_bounds() -> tuple[datetime, datetime]:
 
 @private
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = user_for(update)
+    user = await user_for(update)
     meals, weights = await asyncio.to_thread(today_entries, user.id, *day_bounds())
     if not meals and not weights:
         await update.effective_message.reply_text("Nothing logged today yet.\n\nTap “Log weight” or “Log meal” when you’re ready.", reply_markup=menu_for(update.effective_user.id))
@@ -470,7 +471,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @private
 async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = user_for(update)
+    user = await user_for(update)
     await update.effective_message.chat.send_action(ChatAction.UPLOAD_PHOTO)
     meals, weights = await asyncio.to_thread(progress_entries, user.id)
     chart = await asyncio.to_thread(make_chart, meals, weights, settings.timezone, user.daily_calorie_target)
@@ -483,7 +484,7 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @private
 async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    entry = await asyncio.to_thread(last_entry, user_for(update).id)
+    entry = await asyncio.to_thread(last_entry, (await user_for(update)).id)
     if not entry:
         await update.effective_message.reply_text("There is nothing to undo yet.", reply_markup=menu_for(update.effective_user.id))
         return
@@ -503,7 +504,7 @@ async def undo_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await query.answer()
     pending = context.user_data.pop("undo", None)
     if query.data == "undo:yes" and pending:
-        await asyncio.to_thread(delete_entry, pending[0], pending[1], user_for(update).id)
+        await asyncio.to_thread(delete_entry, pending[0], pending[1], (await user_for(update)).id)
         await query.edit_message_text("✅ Removed. Your last entry was deleted.")
     else:
         await query.edit_message_text("Kept — nothing was changed.")
@@ -611,6 +612,7 @@ def build_application() -> Application:
             overall_max_rate=settings.telegram_messages_per_second,
             max_retries=settings.telegram_rate_limit_retries,
         ))
+        .concurrent_updates(OneUpdatePerUser(settings.concurrent_updates))
         .post_init(start_reminder_loop)
         .post_shutdown(stop_reminder_loop)
         .build()

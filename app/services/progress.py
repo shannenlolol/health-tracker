@@ -2,11 +2,8 @@ from collections import defaultdict
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 from app.models import Meal, Weight
 
@@ -20,7 +17,10 @@ def local_time(value, tz):
 
 def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> BytesIO:
     tz = ZoneInfo(timezone_name)
-    fig, (weight_ax, calorie_ax) = plt.subplots(2, 1, figsize=(8, 8), constrained_layout=True)
+    # A standalone Figure avoids pyplot's global state, which is not thread-safe
+    # when two users' charts render at once.
+    fig = Figure(figsize=(8, 8), layout="constrained")
+    weight_ax, calorie_ax = fig.subplots(2, 1)
     fig.patch.set_facecolor("#f7f5ef")
 
     if weights:
@@ -53,7 +53,6 @@ def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, cal
 
     output = BytesIO()
     fig.savefig(output, format="png", dpi=150)
-    plt.close(fig)
     output.seek(0)
     output.name = "progress.png"
     return output

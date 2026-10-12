@@ -64,6 +64,7 @@ class Settings:
     meal_caption_max_chars: int = positive_setting("MEAL_CAPTION_MAX_CHARS", 200)
     telegram_messages_per_second: int = positive_setting("TELEGRAM_MESSAGES_PER_SECOND", 30)
     telegram_rate_limit_retries: int = positive_setting("TELEGRAM_RATE_LIMIT_RETRIES", 2)
+    concurrent_updates: int = positive_setting("CONCURRENT_UPDATES", 8)
     admin_telegram_user_ids: frozenset[int] = field(
         default_factory=lambda: parse_telegram_user_ids(
             os.getenv("ADMIN_TELEGRAM_USER_IDS"), setting_name="ADMIN_TELEGRAM_USER_IDS"

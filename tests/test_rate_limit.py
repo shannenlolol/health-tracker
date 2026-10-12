@@ -204,7 +204,7 @@ class AccessTests(Fixture):
         return access.request_access(uid, 'Person', None)
 
     def test_rejection_keeps_rolling_limit_and_cooldown_across_restart(self):
-        for index in range(3):
+        for _ in range(3):
             request = self.request()
             self.assertIsNotNone(request)
             self.assertIsNone(self.request())  # Duplicate consumes no admission.

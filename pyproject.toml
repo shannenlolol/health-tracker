@@ -2,3 +2,14 @@
 testpaths = ["tests"]
 # Deprecation warnings raised inside matplotlib's own pyparsing use are not ours to fix.
 filterwarnings = ["ignore::DeprecationWarning:matplotlib.*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+# Errors, warnings, pyflakes and likely bugs. Style-only rule sets (import
+# sorting, syntax upgrades) are left out to avoid churn across the codebase.
+select = ["E", "W", "F", "B"]
+# Several existing lines are long by design (Telegram copy, SQL queries).
+ignore = ["E501"]

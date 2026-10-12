@@ -20,6 +20,7 @@ The NAS runs the bot and stores its database. Once set up, you can switch off yo
 | 🎯 Calorie target | Set your own daily calorie goal. |
 | ⏰ Reminders | Set separate breakfast, lunch, and dinner reminders, or turn them off. |
 | ↩️ Undo | Review and remove your latest meal or weight entry. |
+| ✏️ Edit meal | Fix one of your latest five meals by typing it again; the new estimate replaces the old one. |
 | ❓ Help | Show the available options and command examples. |
 
 Each user has their own records, calorie target, and reminder settings. All users share the timezone chosen by the owner.
@@ -117,6 +118,18 @@ Reminders are optional and only sent if that meal type has not been logged that 
 **2h(iii)** Tap **❓ Help** whenever you need a reminder of the controls.
 
 > **Screenshot placeholders — Undo and help:** Entry confirmation → removal result; Help menu.
+
+### 2i. Edit a saved meal
+
+**2i(i)** Tap **✏️ Edit meal** (or send `/edit`) to see your latest five meals. You can also tap **✏️ Edit** under a meal you have just saved.
+
+**2i(ii)** Choose the meal, then type what it should be, including the portion. For example: *half a plate of rice, not a full plate*.
+
+**2i(iii)** Check the new estimate. The original meal type is already selected; change it if needed, then tap **✅ Save**. The meal keeps its original time and photo.
+
+Each edit uses one meal estimate from your daily allowance. Tap **Cancel** at any point to leave the meal unchanged.
+
+> **Screenshot placeholder — Edit meal:** Meal list → corrected estimate → "Lunch updated".
 
 ## 3. What admins can do
 

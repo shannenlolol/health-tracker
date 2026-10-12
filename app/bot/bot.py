@@ -21,21 +21,24 @@ from app.bot.access_handlers import (
     notify, management_keyboard,
 )
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
-from app.services.progress import make_chart
+from app.services.progress import local_time, make_chart
 from app.services.rate_limit import LimitExceeded, limiter
 from app.services.tracker import (
     add_meal,
     add_weight,
     delete_entry,
     due_reminders,
+    get_meal,
     get_user,
     last_entry,
     mark_reminder_sent,
     progress_entries,
+    recent_meals,
     reminder_settings,
     set_reminder,
     today_entries,
     update_calorie_target,
+    update_meal,
 )
 
 
@@ -144,10 +147,11 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📈 Progress — see your 30-day charts\n"
         "🎯 Calorie target — change your daily calorie goal\n"
         "⏰ Reminders — set or disable meal reminders\n"
-        "↩️ Undo — remove your last entry\n\n"
+        "↩️ Undo — remove your last entry\n"
+        "✏️ Edit meal — fix a saved meal by typing it again\n\n"
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, or /undo.",
+        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.",
         reply_markup=menu_for(update.effective_user.id),
     )
 
@@ -203,7 +207,8 @@ def estimate_text(estimate: MealEstimate) -> str:
 
 
 @ai_guard("text")
-async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str,
+                       editing: tuple[int, str] | None = None) -> None:
     if not settings.openai_api_key:
         await update.message.reply_text("Meal estimates are not set up yet. Please ask the person who set up this bot to add the OpenAI key.")
         return
@@ -214,7 +219,7 @@ async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
         log.exception("Meal text analysis failed")
         await update.message.reply_text("I couldn’t estimate that meal just now. Please try again in a moment.")
         return
-    await show_estimate(update, context, estimate)
+    await show_estimate(update, context, estimate, editing)
 
 
 @private
@@ -382,12 +387,22 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await show_estimate(update, context, estimate)
 
 
-async def show_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE, estimate: MealEstimate) -> None:
+async def show_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE, estimate: MealEstimate,
+                        editing: tuple[int, str] | None = None) -> None:
+    """Show an estimate for confirmation; `editing` is (meal ID, meal type) when replacing a saved meal."""
     context.user_data["pending_meal"] = estimate.model_dump()
-    context.user_data.pop("pending_meal_type", None)
     context.user_data.pop("waiting_for", None)
+    # Every new estimate resets the edit target, so a later, unrelated estimate
+    # can never overwrite the meal that was being edited.
+    if editing:
+        context.user_data["pending_edit_id"], context.user_data["pending_meal_type"] = editing
+    else:
+        context.user_data.pop("pending_edit_id", None)
+        context.user_data.pop("pending_meal_type", None)
+    heading = "✏️ Editing a saved meal\n\n" if editing else ""
     await update.effective_message.reply_text(
-        estimate_text(estimate), reply_markup=meal_confirmation_keyboard()
+        heading + estimate_text(estimate),
+        reply_markup=meal_confirmation_keyboard(editing[1] if editing else None),
     )
 
 
@@ -428,30 +443,100 @@ async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await query.answer("Choose Breakfast, Lunch, Dinner, or Snack first.", show_alert=True)
             return
         await query.answer()
-        meal = await asyncio.to_thread(
-            add_meal,
-            (await user_for(update)).id,
-            MealEstimate(**pending),
-            meal_type,
-            context.user_data.get("pending_image_file_id"),
-        )
-        context.user_data.pop("pending_meal", None)
-        context.user_data.pop("pending_meal_type", None)
-        context.user_data.pop("pending_image_file_id", None)
+        user_id = (await user_for(update)).id
+        edit_id = context.user_data.get("pending_edit_id")
+        if edit_id:
+            meal = await asyncio.to_thread(update_meal, user_id, edit_id, MealEstimate(**pending), meal_type)
+        else:
+            meal = await asyncio.to_thread(
+                add_meal, user_id, MealEstimate(**pending), meal_type,
+                context.user_data.get("pending_image_file_id"),
+            )
+        clear_pending_meal(context)
+        if meal is None:
+            await query.edit_message_text("That meal was removed, so nothing was changed.")
+            return
         await query.edit_message_text(
-            f"✅ {meal.meal_type.title()} saved\n\n"
-            f"{meal.description} — about {meal.estimated_calories:,} kcal"
+            f"✅ {meal.meal_type.title()} {'updated' if edit_id else 'saved'}\n\n"
+            f"{meal.description} — about {meal.estimated_calories:,} kcal",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✏️ Edit", callback_data=f"edit_meal:pick:{meal.id}")
+            ]]),
         )
     elif action == "edit":
         await query.answer()
-        context.user_data["waiting_for"] = "meal"
+        # Keep the edit target when retyping, so Save still replaces the saved meal.
+        edit_id = context.user_data.get("pending_edit_id")
+        context.user_data["waiting_for"] = f"edit_meal:{edit_id}" if edit_id else "meal"
         await query.edit_message_text("No problem. Type what should be changed, including the portion.\n\nExample: half a plate of rice, not a full plate")
     else:
         await query.answer()
-        context.user_data.pop("pending_meal", None)
-        context.user_data.pop("pending_meal_type", None)
-        context.user_data.pop("pending_image_file_id", None)
+        clear_pending_meal(context)
         await query.edit_message_text("Cancelled — nothing was saved.")
+
+
+def clear_pending_meal(context: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in ("pending_meal", "pending_meal_type", "pending_image_file_id", "pending_edit_id"):
+        context.user_data.pop(key, None)
+
+
+def meal_label(meal) -> str:
+    when = local_time(meal.recorded_at, ZoneInfo(settings.timezone))
+    description = meal.description if len(meal.description) <= 30 else meal.description[:29] + "…"
+    return f"{meal.meal_type.title()} · {when.day} {when:%b %H:%M} · {description}"
+
+
+EDIT_CANCEL = InlineKeyboardButton("Cancel", callback_data="edit_meal:cancel")
+
+
+@private
+async def edit_meal_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("waiting_for", None)
+    meals = await asyncio.to_thread(recent_meals, (await user_for(update)).id)
+    if not meals:
+        await update.effective_message.reply_text(
+            "You haven’t logged any meals yet.", reply_markup=menu_for(update.effective_user.id)
+        )
+        return
+    buttons = [[InlineKeyboardButton(meal_label(meal), callback_data=f"edit_meal:pick:{meal.id}")] for meal in meals]
+    await update.effective_message.reply_text(
+        "✏️ Which meal would you like to edit? Here are your latest meals.",
+        reply_markup=InlineKeyboardMarkup([*buttons, [EDIT_CANCEL]]),
+    )
+
+
+@private
+async def edit_meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    if parts[1] != "pick":
+        if str(context.user_data.get("waiting_for", "")).startswith("edit_meal:"):
+            context.user_data.pop("waiting_for", None)
+        await query.edit_message_text("Nothing was changed.")
+        return
+    meal = await asyncio.to_thread(get_meal, (await user_for(update)).id, int(parts[2]))
+    if meal is None:
+        await query.edit_message_text("That meal no longer exists, so there is nothing to edit.")
+        return
+    context.user_data["waiting_for"] = f"edit_meal:{meal.id}"
+    await query.edit_message_text(
+        f"✏️ Editing: {meal.description} — about {meal.estimated_calories:,} kcal\n\n"
+        "Type the corrected meal, including the portion.\n\n"
+        "Example: half a plate of rice, not a full plate",
+        reply_markup=InlineKeyboardMarkup([[EDIT_CANCEL]]),
+    )
+
+
+async def edit_meal_text(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_id: int, text: str) -> None:
+    meal = await asyncio.to_thread(get_meal, (await user_for(update)).id, meal_id)
+    if meal is None:
+        context.user_data.pop("waiting_for", None)
+        await update.message.reply_text(
+            "That meal no longer exists, so there is nothing to edit.", reply_markup=menu_for(update.effective_user.id)
+        )
+        return
+    await analyze_text(update, context, text, editing=(meal.id, meal.meal_type))
 
 
 def day_bounds() -> tuple[datetime, datetime]:
@@ -530,6 +615,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "⚖️ Log weight": ask_weight, "🍽️ Log meal": ask_meal, "🔎 Check meal": check_command,
         "📋 Today": today, "📈 Progress": progress, "🎯 Calorie target": calorie_target_command,
         "⏰ Reminders": reminders_command, "↩️ Undo": undo, "❓ Help": help_message,
+        "✏️ Edit meal": edit_meal_menu,
     }
     if text == "👥 Manage users":
         await admin_menu(update, context)
@@ -546,6 +632,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     elif str(context.user_data.get("waiting_for", "")).startswith("reminder:"):
         meal_type = context.user_data["waiting_for"].split(":", 1)[1]
         await save_reminder(update, context, meal_type, text)
+    elif str(context.user_data.get("waiting_for", "")).startswith("edit_meal:"):
+        await edit_meal_text(update, context, int(context.user_data["waiting_for"].split(":", 1)[1]), text)
     else:
         await analyze_text(update, context, text)
 
@@ -644,7 +732,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CommandHandler("undo", undo))
+    app.add_handler(CommandHandler("edit", edit_meal_menu))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
+    app.add_handler(CallbackQueryHandler(edit_meal_action, pattern=r"^edit_meal:(pick:\d+|cancel)$"))
     app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))
     app.add_handler(CallbackQueryHandler(reminder_action, pattern=r"^reminder:"))
     app.add_handler(MessageHandler(filters.PHOTO, photo))

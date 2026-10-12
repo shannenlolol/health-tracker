@@ -506,7 +506,7 @@ Use this alternative if you want GitHub to build your code and the NAS to instal
 | --- | --- | --- |
 | Compose file | `docker-compose.manual.yml` | `docker-compose.yml` |
 | Builds run on | Your NAS | GitHub Actions |
-| Updates happen | When you upload and rebuild | After a matching push to `main` and the updater's next check |
+| Updates happen | When you upload and rebuild | After a matching push to `main` passes the tests, and the updater's next check |
 | Services | `bot`, `db` | `bot`, `db`, `updater` |
 
 Use one method per installation. These instructions assume a fresh installation; do not deploy a second project against an existing `postgres-data` folder.
@@ -519,13 +519,15 @@ Use one method per installation. These instructions assume a fresh installation;
 
 **12a(iii)** Select **Publish bot container → Run workflow**, choose `main`, and start it.
 
-**12a(iv)** Wait for the workflow to succeed.
+**12a(iv)** Wait for the workflow to succeed. It runs the **Tests** job (lint and test suite) first and builds the image only if that passes.
 
 **12a(v)** Open your GitHub profile/organization → **Packages** → the new package → **Package settings**.
 
 **12a(vi)** Change package visibility to **Public** so the NAS can download it without GitHub credentials.
 
 The repository's workflow builds ARM64 and AMD64 images under your own repository name. The image contains application code; `.env` and database records are excluded by `.dockerignore`. Use the manual method if you want to avoid publishing your image.
+
+A failing test stops the publish, so a broken commit never reaches the NAS: the bot keeps running the last image that passed. The **Tests** workflow also runs on every pull request, so check that it is green before merging.
 
 ### 12b. Deploy on the NAS
 

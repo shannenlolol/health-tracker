@@ -20,7 +20,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  # Every published image reaches the NAS automatically, so never publish
+  # a commit that fails linting or tests.
   publish:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

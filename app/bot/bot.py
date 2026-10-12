@@ -166,11 +166,16 @@ async def weight_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await ask_weight(update, context)
 
 
+def parse_weight(raw: str) -> float:
+    kg = float(raw.lower().replace("kg", "").strip())
+    if not 30 <= kg <= 300:
+        raise ValueError
+    return kg
+
+
 async def save_weight(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str) -> None:
     try:
-        kg = float(raw.lower().replace("kg", "").strip())
-        if not 30 <= kg <= 300:
-            raise ValueError
+        kg = parse_weight(raw)
     except ValueError:
         await update.message.reply_text("That doesn’t look right. Please enter a weight from 30 to 300 kg, like 82.4.")
         return
@@ -258,11 +263,16 @@ async def calorie_target_command(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
+def parse_calorie_target(raw: str) -> int:
+    target = int(raw.lower().replace("kcal", "").replace(",", "").strip())
+    if not 500 <= target <= 10_000:
+        raise ValueError
+    return target
+
+
 async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str) -> None:
     try:
-        target = int(raw.lower().replace("kcal", "").replace(",", "").strip())
-        if not 500 <= target <= 10_000:
-            raise ValueError
+        target = parse_calorie_target(raw)
     except ValueError:
         await update.message.reply_text(
             "Please enter a daily calorie target from 500 to 10,000 kcal, for example: 1800."
@@ -323,23 +333,26 @@ async def reminder_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
-async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str, raw: str) -> None:
+def parse_reminder_time(raw: str) -> str | None:
+    """Return a 24-hour HH:MM time, or None to turn the reminder off."""
     value = raw.strip().lower()
     if value in {"none", "off", "disable"}:
-        reminder_time = None
-    else:
-        parsed_time = None
-        compact_value = value.replace(" ", "")
-        for time_format in ("%H:%M", "%I%p", "%I:%M%p"):
-            try:
-                parsed_time = datetime.strptime(compact_value, time_format)
-                break
-            except ValueError:
-                continue
-        if parsed_time is None:
-            await update.message.reply_text("Please enter a time like 8am, 08:00, or 13:30, or type none.")
-            return
-        reminder_time = parsed_time.strftime("%H:%M")
+        return None
+    compact_value = value.replace(" ", "")
+    for time_format in ("%H:%M", "%I%p", "%I:%M%p"):
+        try:
+            return datetime.strptime(compact_value, time_format).strftime("%H:%M")
+        except ValueError:
+            continue
+    raise ValueError(raw)
+
+
+async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str, raw: str) -> None:
+    try:
+        reminder_time = parse_reminder_time(raw)
+    except ValueError:
+        await update.message.reply_text("Please enter a time like 8am, 08:00, or 13:30, or type none.")
+        return
     await asyncio.to_thread(set_reminder, (await user_for(update)).id, meal_type, reminder_time)
     context.user_data.pop("waiting_for", None)
     display = reminder_time or "None"

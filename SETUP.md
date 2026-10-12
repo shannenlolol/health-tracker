@@ -616,3 +616,11 @@ python -m app.main
 ```
 
 Local records go into `health_tracker.db`; PostgreSQL is not needed. Stop with **Ctrl+C**. This local bot stops when your computer or process stops, so use the NAS installation for everyday hosting. Never run a local test and NAS instance with the same bot token.
+### 13b. Run the tests
+
+Install the development tools once, then run the test suite. Tests use an in-memory database and mocked Telegram and OpenAI calls, so they never touch the NAS, a real bot, or your OpenAI account.
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```

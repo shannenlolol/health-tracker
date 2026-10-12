@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Deprecation warnings raised inside matplotlib's own pyparsing use are not ours to fix.
+filterwarnings = ["ignore::DeprecationWarning:matplotlib.*"]

@@ -1,4 +1,5 @@
 from collections import defaultdict
+from math import ceil
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
@@ -15,19 +16,23 @@ def local_time(value, tz):
     return value.astimezone(tz)
 
 
-def day_locator(days: list, tz) -> mdates.DayLocator:
-    """Tick whole days only, at most seven of them, evenly spaced from the first day.
+def date_axis(days: list, tz) -> tuple[mdates.DateLocator, mdates.DateFormatter]:
+    """Tick at most seven whole days, evenly spaced from the first day, or whole months for long ranges.
 
     Matplotlib's automatic choice restarts at each month's 1st (so "29 Sep" and
     "01 Oct" can collide) and uses hourly ticks for short ranges, which repeats
     the same date label.
     """
     span = (max(days) - min(days)).days + 1 if days else 1
-    interval = next((step for step in (1, 2, 7, 14) if span / step <= 7), 14)
-    return mdates.DayLocator(interval=interval, tz=tz)
+    interval = next((step for step in (1, 2, 7, 14) if span / step <= 7), None)
+    if interval:
+        return mdates.DayLocator(interval=interval, tz=tz), mdates.DateFormatter("%d %b", tz=tz)
+    # Past 14 weeks (e.g. "All time"), label month starts with the year instead.
+    return mdates.MonthLocator(interval=ceil(span / 30.4 / 6), tz=tz), mdates.DateFormatter("%b %Y", tz=tz)
 
 
-def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> Figure:
+def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int,
+                period: str = "last 30 days") -> Figure:
     tz = ZoneInfo(timezone_name)
     # A standalone Figure avoids pyplot's global state, which is not thread-safe
     # when two users' charts render at once.
@@ -43,7 +48,7 @@ def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, ca
         weight_ax.set_ylabel("kg")
     else:
         weight_ax.text(.5, .5, "No weight entries yet", ha="center", va="center", transform=weight_ax.transAxes)
-    weight_ax.set_title("Weight — last 30 days", loc="left", fontweight="bold")
+    weight_ax.set_title(f"Weight — {period}", loc="left", fontweight="bold")
 
     calories: dict[object, int] = defaultdict(int)
     for meal in meals:
@@ -57,7 +62,7 @@ def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, ca
         calorie_ax.text(.5, .5, "No meal entries yet", ha="center", va="center", transform=calorie_ax.transAxes)
     # The goal is named in the title rather than a legend, which could cover the
     # line or the bars whichever corner it was placed in.
-    calorie_ax.set_title(f"Daily calories — last 30 days · dashed line = {calorie_target:,} kcal goal",
+    calorie_ax.set_title(f"Daily calories — {period} · dashed line = {calorie_target:,} kcal goal",
                          loc="left", fontweight="bold")
     calorie_ax.set_ylabel("kcal")
 
@@ -65,14 +70,16 @@ def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, ca
         axis.set_facecolor("#f7f5ef")
         axis.grid(axis="y", alpha=.2)
         axis.spines[["top", "right"]].set_visible(False)
-        axis.xaxis.set_major_locator(day_locator(axis_days, tz))
-        axis.xaxis.set_major_formatter(mdates.DateFormatter("%d %b", tz=tz))
+        locator, formatter = date_axis(axis_days, tz)
+        axis.xaxis.set_major_locator(locator)
+        axis.xaxis.set_major_formatter(formatter)
     return fig
 
 
-def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> BytesIO:
+def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int,
+               period: str = "last 30 days") -> BytesIO:
     output = BytesIO()
-    build_chart(meals, weights, timezone_name, calorie_target).savefig(output, format="png", dpi=150)
+    build_chart(meals, weights, timezone_name, calorie_target, period).savefig(output, format="png", dpi=150)
     output.seek(0)
     output.name = "progress.png"
     return output

@@ -153,7 +153,7 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Tap the menu buttons or use the commands:\n\n"
         "/start — open the main menu\n"
         "/today — today’s meals and totals\n"
-        "/progress — 30-day weight and calorie charts\n"
+        "/progress — weight and calorie charts (7 days, 30 days or all time)\n"
         "/check — estimate a food without saving it, e.g. /check kopi O\n"
         "/weight — log your weight, e.g. /weight 82.4\n"
         "/edit — edit a saved meal\n"
@@ -625,18 +625,45 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(text, reply_markup=menu_for(update.effective_user.id))
 
 
+# Callback value → (days, chart period, caption heading); None days means every entry.
+PROGRESS_RANGES = {
+    "7": (7, "last 7 days", "📈 Your last 7 days"),
+    "30": (30, "last 30 days", "📈 Your last 30 days"),
+    "all": (None, "all time", "📈 All time"),
+}
+
+
 @private
 async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(
+        "📈 Which range would you like to see?",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("7 days", callback_data="progress:7"),
+            InlineKeyboardButton("30 days", callback_data="progress:30"),
+            InlineKeyboardButton("All time", callback_data="progress:all"),
+        ]]),
+    )
+
+
+@private
+async def progress_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    days, period, heading = PROGRESS_RANGES[query.data.split(":")[1]]
     user = await user_for(update)
+    await query.edit_message_text(f"{heading}\n\nDrawing your chart…")
     await update.effective_message.chat.send_action(ChatAction.UPLOAD_PHOTO)
-    meals, weights = await asyncio.to_thread(progress_entries, user.id)
+    meals, weights = await asyncio.to_thread(progress_entries, user.id, days)
     tz = await asyncio.to_thread(timezone_for, user.id)
-    chart = await asyncio.to_thread(make_chart, meals, weights, tz, user.daily_calorie_target)
-    caption = "📈 Your last 30 days"
+    chart = await asyncio.to_thread(make_chart, meals, weights, tz, user.daily_calorie_target, period)
+    caption = heading
     if len(weights) >= 2:
         change = weights[-1].weight_kg - weights[0].weight_kg
         caption += f"\nWeight change: {change:+.1f} kg"
     await update.effective_message.reply_photo(chart, caption=caption, reply_markup=menu_for(update.effective_user.id))
+    # The chart replaces the question, so the chat keeps one message per chart.
+    with suppress(Exception):
+        await query.message.delete()
 
 
 def plural(count: int, singular: str, plural_form: str | None = None) -> str:
@@ -840,6 +867,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
     app.add_handler(CallbackQueryHandler(edit_meal_action, pattern=r"^edit_meal:(pick:\d+|cancel)$"))
     app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))
+    app.add_handler(CallbackQueryHandler(progress_action, pattern=r"^progress:(7|30|all)$"))
     app.add_handler(CallbackQueryHandler(reminder_action, pattern=r"^reminder:"))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))

@@ -15,7 +15,19 @@ def local_time(value, tz):
     return value.astimezone(tz)
 
 
-def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> BytesIO:
+def day_locator(days: list, tz) -> mdates.DayLocator:
+    """Tick whole days only, at most seven of them, evenly spaced from the first day.
+
+    Matplotlib's automatic choice restarts at each month's 1st (so "29 Sep" and
+    "01 Oct" can collide) and uses hourly ticks for short ranges, which repeats
+    the same date label.
+    """
+    span = (max(days) - min(days)).days + 1 if days else 1
+    interval = next((step for step in (1, 2, 7, 14) if span / step <= 7), 14)
+    return mdates.DayLocator(interval=interval, tz=tz)
+
+
+def build_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> Figure:
     tz = ZoneInfo(timezone_name)
     # A standalone Figure avoids pyplot's global state, which is not thread-safe
     # when two users' charts render at once.
@@ -23,6 +35,7 @@ def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, cal
     weight_ax, calorie_ax = fig.subplots(2, 1)
     fig.patch.set_facecolor("#f7f5ef")
 
+    dates: list = []
     if weights:
         dates = [local_time(w.recorded_at, tz) for w in weights]
         values = [w.weight_kg for w in weights]
@@ -35,24 +48,31 @@ def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, cal
     calories: dict[object, int] = defaultdict(int)
     for meal in meals:
         calories[local_time(meal.recorded_at, tz).date()] += meal.estimated_calories
+    days: list = []
     if calories:
         days = sorted(calories)
         calorie_ax.bar(days, [calories[d] for d in days], color="#e07a5f")
-        calorie_ax.axhline(calorie_target, color="#555", linestyle="--", label=f"Goal {calorie_target:,}")
-        calorie_ax.legend(frameon=False)
+        calorie_ax.axhline(calorie_target, color="#555", linestyle="--")
     else:
         calorie_ax.text(.5, .5, "No meal entries yet", ha="center", va="center", transform=calorie_ax.transAxes)
-    calorie_ax.set_title("Daily calories — last 30 days", loc="left", fontweight="bold")
+    # The goal is named in the title rather than a legend, which could cover the
+    # line or the bars whichever corner it was placed in.
+    calorie_ax.set_title(f"Daily calories — last 30 days · dashed line = {calorie_target:,} kcal goal",
+                         loc="left", fontweight="bold")
     calorie_ax.set_ylabel("kcal")
 
-    for axis in (weight_ax, calorie_ax):
+    for axis, axis_days in ((weight_ax, [d.date() for d in dates]), (calorie_ax, days)):
         axis.set_facecolor("#f7f5ef")
         axis.grid(axis="y", alpha=.2)
         axis.spines[["top", "right"]].set_visible(False)
+        axis.xaxis.set_major_locator(day_locator(axis_days, tz))
         axis.xaxis.set_major_formatter(mdates.DateFormatter("%d %b", tz=tz))
+    return fig
 
+
+def make_chart(meals: list[Meal], weights: list[Weight], timezone_name: str, calorie_target: int) -> BytesIO:
     output = BytesIO()
-    fig.savefig(output, format="png", dpi=150)
+    build_chart(meals, weights, timezone_name, calorie_target).savefig(output, format="png", dpi=150)
     output.seek(0)
     output.name = "progress.png"
     return output

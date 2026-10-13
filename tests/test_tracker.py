@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import event, select
 
-from app.models import Meal, MealReminder, Weight
+from app.models import Meal, MealReminder
 from app.services import tracker
 
 # Singapore (UTC+8) day of 12 Oct 2026, expressed in UTC as the bot stores it.
@@ -87,21 +87,3 @@ def test_unsent_reminder_is_retried_and_reset_by_new_time(sessions):
     tracker.mark_reminder_sent(reminder_id, DAY)
     tracker.set_reminder(ann.id, 'dinner', '19:30')
     assert len(tracker.due_reminders(DAY, '19:30', START, END)) == 1
-
-
-def test_undo_removes_latest_entry_of_own_user_only(sessions):
-    ann, ben = tracker.get_user(1, 'Ann'), tracker.get_user(2, 'Ben')
-    with sessions() as db:
-        add_meal(db, ann, at=datetime(2026, 10, 12, 4, tzinfo=timezone.utc))
-        db.add(Weight(user_id=ann.id, weight_kg=60, recorded_at=datetime(2026, 10, 12, 5, tzinfo=timezone.utc)))
-        db.commit()
-
-    kind, entry = tracker.last_entry(ann.id)
-    assert kind == 'weight'
-    tracker.delete_entry(kind, entry.id, ben.id)  # Another user's ID must not delete it.
-    assert tracker.last_entry(ann.id)[0] == 'weight'
-
-    tracker.delete_entry(kind, entry.id, ann.id)
-    assert tracker.last_entry(ann.id)[0] == 'meal'
-    tracker.delete_entry('meal', tracker.last_entry(ann.id)[1].id, ann.id)
-    assert tracker.last_entry(ann.id) is None

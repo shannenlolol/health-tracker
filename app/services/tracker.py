@@ -145,9 +145,32 @@ def add_meal(user_id: int, estimate: MealEstimate, meal_type: str, image_file_id
         return meal
 
 
-def recent_meals(user_id: int, limit: int = 5) -> list[Meal]:
+def recent_entries(user_id: int, limit: int = 8) -> list[tuple[str, Meal | Weight]]:
+    """The latest meals and weights together, newest first, as ("meal" | "weight", entry) pairs."""
     with SessionLocal() as db:
-        return list(db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(limit)))
+        meals = db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(limit))
+        weights = db.scalars(select(Weight).where(Weight.user_id == user_id).order_by(Weight.recorded_at.desc()).limit(limit))
+        entries = [("meal", m) for m in meals] + [("weight", w) for w in weights]
+    # Each list is already the newest `limit` of its kind, so merging them and
+    # keeping the newest `limit` overall gives the right mix.
+    return sorted(entries, key=lambda pair: pair[1].recorded_at, reverse=True)[:limit]
+
+
+def get_weight(user_id: int, weight_id: int) -> Weight | None:
+    """Return the weight only if it belongs to this user; button data can't be trusted."""
+    with SessionLocal() as db:
+        return db.scalar(select(Weight).where(Weight.id == weight_id, Weight.user_id == user_id))
+
+
+def update_weight(user_id: int, weight_id: int, kg: float) -> Weight | None:
+    """Correct a saved weight, keeping its original time. Returns None if it was deleted meanwhile."""
+    with SessionLocal() as db:
+        entry = db.scalar(select(Weight).where(Weight.id == weight_id, Weight.user_id == user_id))
+        if entry is None:
+            return None
+        entry.weight_kg = kg
+        db.commit()
+        return entry
 
 
 def get_meal(user_id: int, meal_id: int) -> Meal | None:
@@ -159,7 +182,7 @@ def get_meal(user_id: int, meal_id: int) -> Meal | None:
 def update_meal(user_id: int, meal_id: int, estimate: MealEstimate, meal_type: str) -> Meal | None:
     """Replace a saved meal's estimate, keeping its original time and photo.
 
-    Returns None if the meal was removed (e.g. with Undo) while being edited.
+    Returns None if the meal was deleted while being edited.
     """
     with SessionLocal() as db:
         meal = db.scalar(select(Meal).where(Meal.id == meal_id, Meal.user_id == user_id))
@@ -198,19 +221,10 @@ def all_entries(user_id: int) -> tuple[list[Meal], list[Weight]]:
         return meals, weights
 
 
-def last_entry(user_id: int) -> tuple[str, Meal | Weight] | None:
-    with SessionLocal() as db:
-        meal = db.scalar(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(1))
-        weight = db.scalar(select(Weight).where(Weight.user_id == user_id).order_by(Weight.recorded_at.desc()).limit(1))
-        if not meal and not weight:
-            return None
-        if meal and (not weight or meal.recorded_at >= weight.recorded_at):
-            return "meal", meal
-        return "weight", weight
-
-
-def delete_entry(kind: str, entry_id: int, user_id: int) -> None:
+def delete_entry(kind: str, entry_id: int, user_id: int) -> bool:
+    """Delete one of the user's own entries; False if it was already gone or belongs to someone else."""
     model = Meal if kind == "meal" else Weight
     with SessionLocal() as db:
-        db.execute(delete(model).where(model.id == entry_id, model.user_id == user_id))
+        deleted = db.execute(delete(model).where(model.id == entry_id, model.user_id == user_id)).rowcount
         db.commit()
+        return bool(deleted)

@@ -24,7 +24,7 @@ from app.services.export import export_csv
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import local_time, make_chart
 from app.services.rate_limit import LimitExceeded, limiter
-from app.services.summary import saved_text, short_date, today_text
+from app.services.summary import MEAL_ICONS, saved_text, short_date, today_text
 from app.services.timezones import COMMON as COMMON_TIMEZONES, day_bounds, resolve_timezone
 from app.services.tracker import (
     add_meal,
@@ -34,10 +34,10 @@ from app.services.tracker import (
     due_reminders,
     get_meal,
     get_user,
-    last_entry,
+    get_weight,
     mark_reminder_sent,
     progress_entries,
-    recent_meals,
+    recent_entries,
     reminder_settings,
     set_reminder,
     set_timezone,
@@ -46,6 +46,7 @@ from app.services.tracker import (
     today_entries,
     update_calorie_target,
     update_meal,
+    update_weight,
 )
 
 
@@ -156,8 +157,7 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/progress — weight and calorie charts (7 days, 30 days or all time)\n"
         "/check — estimate a food without saving it, e.g. /check kopi O\n"
         "/weight — log your weight, e.g. /weight 82.4\n"
-        "/edit — edit a saved meal\n"
-        "/undo — remove your last entry\n"
+        "/edit — change or delete a saved meal or weight\n"
         "/target — set your daily calorie target, e.g. /target 1800\n"
         "/reminders — set meal reminders\n"
         "/timezone — set your timezone, so your day and reminders match your clock\n"
@@ -553,53 +553,91 @@ def clear_pending_meal(context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop(key, None)
 
 
-def meal_label(meal, timezone_name: str) -> str:
-    when = local_time(meal.recorded_at, ZoneInfo(timezone_name))
-    description = meal.description if len(meal.description) <= 30 else meal.description[:29] + "…"
-    return f"{meal.meal_type.title()} · {when.day} {when:%b %H:%M} · {description}"
+def entry_label(kind: str, entry, timezone_name: str, short: bool = True) -> str:
+    """Name a meal or weight with its local time, e.g. "🌙 Dinner · 13 Oct 19:57 · Rice with…"."""
+    when = local_time(entry.recorded_at, ZoneInfo(timezone_name))
+    stamp = f"{when.day} {when:%b %H:%M}"
+    if kind == "weight":
+        return f"⚖️ Weight · {stamp} · {entry.weight_kg:g} kg"
+    description = entry.description if not short or len(entry.description) <= 30 else entry.description[:29] + "…"
+    return f"{MEAL_ICONS.get(entry.meal_type, '🍽️')} {entry.meal_type.title()} · {stamp} · {description}"
 
 
+# Meals keep the "edit_meal:" prefix so ✏️ Edit buttons under older saved-meal messages still work.
 EDIT_CANCEL = InlineKeyboardButton("Cancel", callback_data="edit_meal:cancel")
+ENTRY_GETTERS = {"meal": get_meal, "weight": get_weight}
+
+
+def stop_editing(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if str(context.user_data.get("waiting_for", "")).startswith(("edit_meal:", "edit_weight:")):
+        context.user_data.pop("waiting_for", None)
 
 
 @private
-async def edit_meal_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def edit_entries_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("waiting_for", None)
-    meals = await asyncio.to_thread(recent_meals, (await user_for(update)).id)
-    if not meals:
+    entries = await asyncio.to_thread(recent_entries, (await user_for(update)).id)
+    if not entries:
         await update.effective_message.reply_text(
-            "You haven’t logged any meals yet.", reply_markup=menu_for(update.effective_user.id)
+            "You haven’t logged any meals or weights yet.", reply_markup=menu_for(update.effective_user.id)
         )
         return
     tz = await timezone_of(update)
-    buttons = [[InlineKeyboardButton(meal_label(meal, tz), callback_data=f"edit_meal:pick:{meal.id}")] for meal in meals]
+    buttons = [
+        [InlineKeyboardButton(entry_label(kind, entry, tz), callback_data=f"edit_{kind}:pick:{entry.id}")]
+        for kind, entry in entries
+    ]
     await update.effective_message.reply_text(
-        "✏️ Which meal would you like to edit? Here are your latest meals.",
+        "✏️ Which entry would you like to change or delete? Here are your latest entries.",
         reply_markup=InlineKeyboardMarkup([*buttons, [EDIT_CANCEL]]),
     )
 
 
 @private
-async def edit_meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def edit_entry_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle edit_<kind>:pick|delete|confirm:<id> and edit_meal:cancel."""
     query = update.callback_query
     await query.answer()
-    parts = query.data.split(":")
-    if parts[1] != "pick":
-        if str(context.user_data.get("waiting_for", "")).startswith("edit_meal:"):
-            context.user_data.pop("waiting_for", None)
+    if query.data == "edit_meal:cancel":
+        stop_editing(context)
         await query.edit_message_text("Nothing was changed.")
         return
-    meal = await asyncio.to_thread(get_meal, (await user_for(update)).id, int(parts[2]))
-    if meal is None:
-        await query.edit_message_text("That meal no longer exists, so there is nothing to edit.")
+    prefix, action, entry_id = query.data.split(":")
+    kind = prefix.removeprefix("edit_")
+    user_id = (await user_for(update)).id
+    entry = await asyncio.to_thread(ENTRY_GETTERS[kind], user_id, int(entry_id))
+    if entry is None:
+        stop_editing(context)
+        await query.edit_message_text("That entry no longer exists, so there is nothing to change.")
         return
-    context.user_data["waiting_for"] = f"edit_meal:{meal.id}"
-    await query.edit_message_text(
-        f"✏️ Editing: {meal.description} — about {meal.estimated_calories:,} kcal\n\n"
-        "Type the corrected meal, including the portion.\n\n"
-        "Example: half a plate of rice, not a full plate",
-        reply_markup=InlineKeyboardMarkup([[EDIT_CANCEL]]),
-    )
+    label = entry_label(kind, entry, await timezone_of(update), short=False)
+    if action == "pick":
+        # Typing straight away corrects the entry; Delete is one tap away.
+        context.user_data["waiting_for"] = f"edit_{kind}:{entry.id}"
+        hint = (
+            f"About {entry.estimated_calories:,} kcal\n\nType the corrected meal, including the portion.\n\n"
+            "Example: half a plate of rice, not a full plate"
+            if kind == "meal" else "Type the correct weight, for example 62.4."
+        )
+        await query.edit_message_text(
+            f"✏️ Editing: {label}\n\n{hint}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🗑️ Delete", callback_data=f"edit_{kind}:delete:{entry.id}"), EDIT_CANCEL,
+            ]]),
+        )
+    elif action == "delete":
+        stop_editing(context)
+        await query.edit_message_text(
+            f"🗑️ Delete this entry?\n\n{label}\n\nThis can’t be undone.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Yes, delete", callback_data=f"edit_{kind}:confirm:{entry.id}"),
+                InlineKeyboardButton("No, keep it", callback_data="edit_meal:cancel"),
+            ]]),
+        )
+    else:
+        stop_editing(context)
+        deleted = await asyncio.to_thread(delete_entry, kind, entry.id, user_id)
+        await query.edit_message_text(f"🗑️ Deleted: {label}" if deleted else "That entry was already deleted.")
 
 
 async def edit_meal_text(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_id: int, text: str) -> None:
@@ -611,6 +649,21 @@ async def edit_meal_text(update: Update, context: ContextTypes.DEFAULT_TYPE, mea
         )
         return
     await analyze_text(update, context, text, editing=(meal.id, meal.meal_type))
+
+
+async def edit_weight_text(update: Update, context: ContextTypes.DEFAULT_TYPE, weight_id: int, raw: str) -> None:
+    try:
+        kg = parse_weight(raw)
+    except ValueError:
+        await update.message.reply_text("That doesn’t look right. Please enter a weight from 30 to 300 kg, like 82.4.")
+        return
+    user_id = (await user_for(update)).id
+    old = await asyncio.to_thread(get_weight, user_id, weight_id)
+    entry = await asyncio.to_thread(update_weight, user_id, weight_id, kg) if old else None
+    context.user_data.pop("waiting_for", None)
+    text = (f"✅ Weight updated: {entry.weight_kg:g} kg (was {old.weight_kg:g} kg)" if entry
+            else "That weight no longer exists, so nothing was changed.")
+    await update.message.reply_text(text, reply_markup=menu_for(update.effective_user.id))
 
 
 @private
@@ -696,41 +749,16 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 @private
-async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    entry = await asyncio.to_thread(last_entry, (await user_for(update)).id)
-    if not entry:
-        await update.effective_message.reply_text("There is nothing to undo yet.", reply_markup=menu_for(update.effective_user.id))
-        return
-    kind, item = entry
-    label = item.description if kind == "meal" else f"{item.weight_kg:g} kg"
-    context.user_data["undo"] = (kind, item.id)
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Yes, remove it", callback_data="undo:yes"),
-        InlineKeyboardButton("No, keep it", callback_data="undo:no"),
-    ]])
-    await update.effective_message.reply_text(f"Remove your last entry?\n\n{label}", reply_markup=keyboard)
-
-
-@private
-async def undo_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    pending = context.user_data.pop("undo", None)
-    if query.data == "undo:yes" and pending:
-        await asyncio.to_thread(delete_entry, pending[0], pending[1], (await user_for(update)).id)
-        await query.edit_message_text("✅ Removed. Your last entry was deleted.")
-    else:
-        await query.edit_message_text("Kept — nothing was changed.")
-
-
-@private
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     actions = {
         "⚖️ Log weight": ask_weight, "🍽️ Log meal": ask_meal, "🔎 Check meal": check_command,
         "📋 Today": today, "📈 Progress": progress, "🎯 Calorie target": calorie_target_command,
-        "⏰ Reminders": reminders_command, "↩️ Undo": undo, "❓ Help": help_message,
-        "✏️ Edit meal": edit_meal_menu,
+        "⏰ Reminders": reminders_command, "📥 Download": export_data, "❓ Help": help_message,
+        "✏️ Edit entries": edit_entries_menu,
+        # Older keyboards keep these buttons until the menu is next sent; without
+        # them a tap would be sent to OpenAI as a meal description.
+        "✏️ Edit meal": edit_entries_menu, "↩️ Undo": edit_entries_menu,
     }
     if text == "👥 Manage users":
         await admin_menu(update, context)
@@ -751,6 +779,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await save_timezone(update, context, text)
     elif str(context.user_data.get("waiting_for", "")).startswith("edit_meal:"):
         await edit_meal_text(update, context, int(context.user_data["waiting_for"].split(":", 1)[1]), text)
+    elif str(context.user_data.get("waiting_for", "")).startswith("edit_weight:"):
+        await edit_weight_text(update, context, int(context.user_data["waiting_for"].split(":", 1)[1]), text)
     else:
         await analyze_text(update, context, text)
 
@@ -859,14 +889,14 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("reminders", reminders_command))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("progress", progress))
-    app.add_handler(CommandHandler("undo", undo))
-    app.add_handler(CommandHandler("edit", edit_meal_menu))
+    app.add_handler(CommandHandler("edit", edit_entries_menu))
     app.add_handler(CommandHandler("export", export_data))
     app.add_handler(CommandHandler("timezone", timezone_command))
     app.add_handler(CallbackQueryHandler(timezone_action, pattern=r"^tz:(set:[A-Za-z_/+-]+|default)$"))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
-    app.add_handler(CallbackQueryHandler(edit_meal_action, pattern=r"^edit_meal:(pick:\d+|cancel)$"))
-    app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))
+    app.add_handler(CallbackQueryHandler(
+        edit_entry_action, pattern=r"^(edit_(meal|weight):(pick|delete|confirm):\d+|edit_meal:cancel)$"
+    ))
     app.add_handler(CallbackQueryHandler(progress_action, pattern=r"^progress:(7|30|all)$"))
     app.add_handler(CallbackQueryHandler(reminder_action, pattern=r"^reminder:"))
     app.add_handler(MessageHandler(filters.PHOTO, photo))

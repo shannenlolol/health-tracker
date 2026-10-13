@@ -219,7 +219,7 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if uid is None:
             await query.edit_message_text("Access was already changed, or this is a configured admin.", reply_markup=management_keyboard())
             return
-        # Discard unfinished meal/undo state so reapproval starts a fresh session.
+        # Discard unfinished meal/edit state so reapproval starts a fresh session.
         limiter.clear_access_silence(uid)
         context.application.drop_user_data(uid)
         await notify(context, uid, "Your access has been removed. Your existing records have been kept.")

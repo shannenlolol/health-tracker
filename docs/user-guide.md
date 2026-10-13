@@ -49,10 +49,11 @@ Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or 
 
 ## Fix a mistake
 
-- **✏️ Edit meal** shows your five latest meals. Pick one and type what it should have been, for example *half a plate of rice, not a full plate*. Check the new estimate and tap **✅ Save**; the meal keeps its original time. You can also tap **✏️ Edit** under a meal you've just saved.
-- **↩️ Undo** removes your most recent meal or weight, after you confirm.
+**✏️ Edit entries** shows your eight latest meals and weights. Pick one, then:
 
-Each edit uses one meal estimate from your daily allowance.
+- **To correct a meal,** type what it should have been, for example *half a plate of rice, not a full plate*. Check the new estimate and tap **✅ Save**; the meal keeps its original time. Each meal edit uses one meal estimate from your daily allowance. You can also tap **✏️ Edit** under a meal you've just saved.
+- **To correct a weight,** type the right number, such as `62.4`. It keeps its original time.
+- **To delete it,** tap **🗑️ Delete**, then **Yes, delete**. This can't be undone.
 
 ## Settings
 
@@ -62,7 +63,7 @@ Each edit uses one meal estimate from your daily allowance.
 
 ## Download your data
 
-Send `/export`. The bot replies with a spreadsheet file (CSV) of all your meals and weights, with times in your timezone. Open it in Excel, Numbers or Google Sheets.
+Tap **📥 Download** or send `/export`. The bot replies with a spreadsheet file (CSV) of all your meals and weights, with times in your timezone. Open it in Excel, Numbers or Google Sheets.
 
 ## Commands
 
@@ -73,8 +74,7 @@ Send `/export`. The bot replies with a spreadsheet file (CSV) of all your meals 
 | `/progress` | Weight and calorie charts for 7 days, 30 days or all time |
 | `/check kopi O` | Estimate a food without saving it |
 | `/weight 82.4` | Log your weight |
-| `/edit` | Edit a saved meal |
-| `/undo` | Remove your last entry |
+| `/edit` | Change or delete a saved meal or weight |
 | `/target 1800` | Set your daily calorie target |
 | `/reminders` | Set meal reminders |
 | `/timezone` | Set your timezone |

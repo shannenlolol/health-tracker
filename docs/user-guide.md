@@ -43,7 +43,7 @@ Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or 
 ## See today and your progress
 
 - **📋 Today** lists today's meals with calories, protein, carbs and fat for each, then your totals and a progress bar against your calorie target (how many kcal are left, or how far over you are). After you save a meal, the same bar shows where your day stands.
-- **📈 Progress** sends charts of your weight and daily calories for the last 30 days. The dashed line is your calorie goal.
+- **📈 Progress** asks which range you want (7 days, 30 days or all time), then sends charts of your weight and daily calories for it. The dashed line is your calorie goal.
 
 > **Screenshot placeholder:** Today summary · Progress chart.
 
@@ -70,7 +70,7 @@ Send `/export`. The bot replies with a spreadsheet file (CSV) of all your meals 
 | --- | --- |
 | `/start` | Open the main menu |
 | `/today` | Today's meals and totals |
-| `/progress` | 30-day weight and calorie charts |
+| `/progress` | Weight and calorie charts for 7 days, 30 days or all time |
 | `/check kopi O` | Estimate a food without saving it |
 | `/weight 82.4` | Log your weight |
 | `/edit` | Edit a saved meal |

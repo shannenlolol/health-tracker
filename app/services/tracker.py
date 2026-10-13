@@ -179,12 +179,16 @@ def today_entries(user_id: int, start_utc: datetime, end_utc: datetime) -> tuple
         return meals, weights
 
 
-def progress_entries(user_id: int, days: int = 30) -> tuple[list[Meal], list[Weight]]:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+def progress_entries(user_id: int, days: int | None = 30) -> tuple[list[Meal], list[Weight]]:
+    """Entries from the last `days` days, or every entry when `days` is None."""
+    since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+
+    def entries(model):
+        query = select(model).where(model.user_id == user_id).order_by(model.recorded_at)
+        return query.where(model.recorded_at >= since) if since else query
+
     with SessionLocal() as db:
-        meals = list(db.scalars(select(Meal).where(Meal.user_id == user_id, Meal.recorded_at >= since).order_by(Meal.recorded_at)))
-        weights = list(db.scalars(select(Weight).where(Weight.user_id == user_id, Weight.recorded_at >= since).order_by(Weight.recorded_at)))
-        return meals, weights
+        return list(db.scalars(entries(Meal))), list(db.scalars(entries(Weight)))
 
 
 def all_entries(user_id: int) -> tuple[list[Meal], list[Weight]]:

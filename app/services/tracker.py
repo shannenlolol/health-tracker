@@ -155,6 +155,13 @@ def progress_entries(user_id: int, days: int = 30) -> tuple[list[Meal], list[Wei
         return meals, weights
 
 
+def all_entries(user_id: int) -> tuple[list[Meal], list[Weight]]:
+    with SessionLocal() as db:
+        meals = list(db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at)))
+        weights = list(db.scalars(select(Weight).where(Weight.user_id == user_id).order_by(Weight.recorded_at)))
+        return meals, weights
+
+
 def last_entry(user_id: int) -> tuple[str, Meal | Weight] | None:
     with SessionLocal() as db:
         meal = db.scalar(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(1))

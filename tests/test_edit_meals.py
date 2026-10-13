@@ -1,4 +1,4 @@
-"""Editing saved meals: storage rules and the full Telegram flow, with OpenAI mocked."""
+"""Editing and deleting saved meals: storage rules and the full Telegram flow, with OpenAI mocked."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -61,6 +61,14 @@ def test_recent_meals_newest_first_and_limited(sessions):
             db.commit()
     hours = [meal.recorded_at.hour for meal in tracker.recent_meals(user.id)]
     assert hours == [6, 5, 4, 3, 2]
+
+
+def test_meals_are_deleted_by_their_owner_only(sessions):
+    ann, ben = tracker.get_user(1, 'Ann'), tracker.get_user(2, 'Ben')
+    meal = save_lunch(ann)
+    assert tracker.delete_entry('meal', meal.id, ben.id) is False
+    assert tracker.delete_entry('meal', meal.id, ann.id) is True
+    assert tracker.delete_entry('meal', meal.id, ann.id) is False
 
 
 # --- Telegram flow -------------------------------------------------------------
@@ -204,3 +212,58 @@ async def test_meal_removed_mid_edit_is_not_recreated(chat, sessions):
 async def test_no_meals_yet(chat):
     await bot.edit_meal_menu(chat.message('/edit'), chat.context)
     assert 'haven’t logged any meals' in chat.last_text()
+
+
+@pytest.mark.anyio
+async def test_delete_asks_first_then_removes(chat, sessions):
+    meal = save_lunch(tracker.get_user(1, 'Ann'))
+    await start_edit(chat, meal)
+    assert chat.buttons() == [f'edit_meal:delete:{meal.id}', 'edit_meal:cancel']
+    await bot.edit_meal_action(chat.tap(f'edit_meal:delete:{meal.id}'), chat.context)
+    assert chat.last_text().startswith('🗑️ Delete this meal?')
+    assert chat.buttons() == [f'edit_meal:confirm:{meal.id}', 'edit_meal:cancel']
+    assert 'waiting_for' not in chat.context.user_data  # Typing now must not edit the meal.
+
+    await bot.edit_meal_action(chat.tap(f'edit_meal:confirm:{meal.id}'), chat.context)
+    assert chat.last_text().startswith('🗑️ Deleted: ☀️ Lunch')
+    assert meal_count(sessions) == 0
+
+    # A second tap on the old confirm button finds nothing to delete.
+    await bot.edit_meal_action(chat.tap(f'edit_meal:confirm:{meal.id}'), chat.context)
+    assert 'no longer exists' in chat.last_text()
+
+
+@pytest.mark.anyio
+async def test_keeping_a_meal_changes_nothing(chat, sessions):
+    meal = save_lunch(tracker.get_user(1, 'Ann'))
+    await bot.edit_meal_action(chat.tap(f'edit_meal:delete:{meal.id}'), chat.context)
+    await bot.edit_meal_action(chat.tap('edit_meal:cancel'), chat.context)
+    assert chat.last_text() == 'Nothing was changed.'
+    assert meal_count(sessions) == 1
+
+
+@pytest.mark.anyio
+async def test_old_undo_button_opens_edit_meal_not_the_ai(chat, sessions):
+    save_lunch(tracker.get_user(1, 'Ann'))
+    await bot.text_message(chat.message('↩️ Undo'), chat.context)
+    assert chat.last_text().startswith('✏️ Which meal')
+    bot.MealAnalyzer().from_text.assert_not_awaited()
+
+
+def test_menu_is_grouped_by_task_with_download_instead_of_undo():
+    from app.bot.keyboards import MENU
+    assert [[str(button.text) for button in row] for row in MENU.keyboard] == [
+        ['🍽️ Log meal', '🔎 Check meal'],
+        ['✏️ Edit meal', '📋 Today'],
+        ['⚖️ Log weight', '📈 Progress'],
+        ['🎯 Calorie target', '⏰ Reminders'],
+        ['📥 Download', '❓ Help'],
+    ]
+
+
+@pytest.mark.anyio
+async def test_weight_reply_says_when_it_replaced_todays(chat, sessions):
+    await bot.weight_command(chat.message('/weight 64.2'), SimpleNamespace(user_data={}, args=['64.2']))
+    assert chat.last_text().startswith('✅ Saved: 64.2 kg')
+    await bot.weight_command(chat.message('/weight 62.4'), SimpleNamespace(user_data={}, args=['62.4']))
+    assert chat.last_text() == '✅ Updated today’s weight: 62.4 kg (was 64.2 kg)'

@@ -1,9 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import event, select
 
 from app.models import Meal, MealReminder, Weight
 from app.services import tracker
+from app.services.timezones import day_bounds
 
 # Singapore (UTC+8) day of 12 Oct 2026, expressed in UTC as the bot stores it.
 DAY = date(2026, 10, 12)
@@ -89,19 +90,21 @@ def test_unsent_reminder_is_retried_and_reset_by_new_time(sessions):
     assert len(tracker.due_reminders(DAY, '19:30', START, END)) == 1
 
 
-def test_undo_removes_latest_entry_of_own_user_only(sessions):
+def test_logging_weight_again_the_same_day_replaces_it(sessions):
+    # New weights are stamped with the current time, so use today's real local day.
+    start, end = day_bounds('Asia/Singapore')
     ann, ben = tracker.get_user(1, 'Ann'), tracker.get_user(2, 'Ben')
-    with sessions() as db:
-        add_meal(db, ann, at=datetime(2026, 10, 12, 4, tzinfo=timezone.utc))
-        db.add(Weight(user_id=ann.id, weight_kg=60, recorded_at=datetime(2026, 10, 12, 5, tzinfo=timezone.utc)))
+    with sessions() as db:  # Yesterday's weight, just before the day starts, must be left alone.
+        db.add(Weight(user_id=ann.id, weight_kg=65, recorded_at=start - timedelta(minutes=1)))
         db.commit()
+    tracker.log_weight(ben.id, 80, start, end)  # Another user's weight must not be replaced.
 
-    kind, entry = tracker.last_entry(ann.id)
-    assert kind == 'weight'
-    tracker.delete_entry(kind, entry.id, ben.id)  # Another user's ID must not delete it.
-    assert tracker.last_entry(ann.id)[0] == 'weight'
+    entry, previous = tracker.log_weight(ann.id, 64.2, start, end)
+    assert (entry.weight_kg, previous) == (64.2, None)
+    entry, previous = tracker.log_weight(ann.id, 62.4, start, end)
+    assert (entry.weight_kg, previous) == (62.4, 64.2)
 
-    tracker.delete_entry(kind, entry.id, ann.id)
-    assert tracker.last_entry(ann.id)[0] == 'meal'
-    tracker.delete_entry('meal', tracker.last_entry(ann.id)[1].id, ann.id)
-    assert tracker.last_entry(ann.id) is None
+    with sessions() as db:
+        weights = db.scalars(select(Weight.weight_kg).where(Weight.user_id == ann.id).order_by(Weight.recorded_at))
+        assert list(weights) == [65, 62.4]
+        assert db.scalar(select(Weight.weight_kg).where(Weight.user_id == ben.id)) == 80

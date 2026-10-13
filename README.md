@@ -23,7 +23,7 @@ The NAS runs the bot and stores its database. Once set up, you can switch off yo
 | ✏️ Edit meal | Fix one of your latest five meals by typing it again; the new estimate replaces the old one. |
 | ❓ Help | Show the available options and command examples. |
 
-Each user has their own records, calorie target, and reminder settings. All users share the timezone chosen by the owner.
+Each user has their own records, calorie target, and reminder settings. Each user can set their own timezone with `/timezone`; otherwise the owner's default applies.
 
 ## 2. Start using the bot
 
@@ -105,7 +105,7 @@ Use **✏️ Change** to describe a correction and get another estimate, or **�
 
 **2g(iv)** To turn it off, choose that meal again and tap **Set [meal] to None**, or send `None`.
 
-Reminders are optional and only sent if that meal type has not been logged that day. The reminder menu shows the bot's timezone.
+Reminders are optional and only sent if that meal type has not been logged that day. Reminder times follow your timezone, which the reminder menu shows.
 
 > **Screenshot placeholders — Reminders:** Meal list → time prompt → saved time → disabled reminder.
 
@@ -130,6 +130,26 @@ Reminders are optional and only sent if that meal type has not been logged that 
 Each edit uses one meal estimate from your daily allowance. Tap **Cancel** at any point to leave the meal unchanged.
 
 > **Screenshot placeholder — Edit meal:** Meal list → corrected estimate → "Lunch updated".
+
+### 2j. Download your data
+
+**2j(i)** Send `/export`.
+
+**2j(ii)** The bot replies with a CSV file of all your meals and weights, oldest first, with times in your timezone. Open it in Excel, Numbers, or Google Sheets.
+
+> **Screenshot placeholder — Export:** `/export` → file in chat → opened in a spreadsheet.
+
+### 2k. Set your timezone
+
+Your timezone decides when your day starts (for **📋 Today**, charts, and exports) and when reminders arrive. It starts as the owner's default.
+
+**2k(i)** Send `/timezone`. The bot shows your current timezone and local time.
+
+**2k(ii)** Tap a city, or type one, such as *London* or *Kolkata*. You can also type a full name such as `Asia/Tokyo`.
+
+**2k(iii)** Tap **Use the default** to go back to the owner's timezone.
+
+> **Screenshot placeholder — Timezone:** `/timezone` → city buttons → confirmation with local time.
 
 ## 3. What admins can do
 
@@ -186,6 +206,7 @@ Rejected or removed users can request again. Admins are configured in the NAS se
 - **Separate user records:** users see their own health data. The admin menu manages access; it does not provide a view of other users' health logs.
 - **Owner-managed storage:** records live in PostgreSQL on the NAS. Someone with database access can inspect them.
 - **External services:** messages pass through Telegram; meal descriptions and photos are sent to OpenAI for analysis. The owner supplies the API key for everyone's meal estimates.
+- **Your own copy:** any user with access can send `/export` to download their meals and weights as a CSV file.
 - **Photos:** the application does not save photo files on the NAS, but a saved photo meal includes its Telegram file ID.
 - **Estimates:** AI nutrition values are approximate. Review the food and portions before saving.
 - **Availability:** the NAS must stay on and connected. There is no need to keep a laptop running.
@@ -202,7 +223,7 @@ Default limits can be changed using the settings in `.env.example`:
 - **Access requests:** at most 3 per person in a rolling 24 hours, at least 5 minutes apart; at most 10 globally per hour and 25 pending. Pending requests expire after 14 days. The first 5 requests in a 10-minute alert window notify admins individually; further requests are included in one summary when the window ends.
 - **Telegram sends:** outgoing messages are throttled, and rate-limit responses are retried up to twice.
 
-Daily AI quotas reset at midnight in the configured timezone. Daily counters and access-request limits survive restarts; short-term message/minute throttles and grouped alerts reset. Request timestamps contain only Telegram IDs and times and are purged after 24 hours during maintenance. Current-day AI counters store IDs and counts; previous days are removed on the next accepted estimate. These controls assume one bot process.
+Daily AI quotas reset at midnight in the default `TIMEZONE` for everyone, even users who chose their own timezone. Daily counters and access-request limits survive restarts; short-term message/minute throttles and grouped alerts reset. Request timestamps contain only Telegram IDs and times and are purged after 24 hours during maintenance. Current-day AI counters store IDs and counts; previous days are removed on the next accepted estimate. These controls assume one bot process.
 
 The bot handles different users' updates concurrently (up to `CONCURRENT_UPDATES`, default 8), but only one at a time per user. Messages a user sends while the bot is still replying to them are ignored with a short notice. `AI_MAX_CONCURRENT` separately caps how many OpenAI calls run at once.
 

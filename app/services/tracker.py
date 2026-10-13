@@ -1,10 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.db.database import SessionLocal
 from app.models import Meal, MealReminder, User, Weight
+from app.models.entities import UserTimezone
 from app.services.meal_analyzer import MealEstimate
 
 
@@ -53,8 +54,37 @@ def set_reminder(user_id: int, meal_type: str, reminder_time: str | None) -> Non
         db.commit()
 
 
-def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_utc: datetime) -> list[tuple[int, int, str]]:
+def timezone_for(user_id: int) -> str:
+    with SessionLocal() as db:
+        row = db.get(UserTimezone, user_id)
+        return row.timezone if row else settings.timezone
+
+
+def set_timezone(user_id: int, timezone_name: str | None) -> None:
+    """Store a user's timezone; None returns them to the bot-wide default."""
+    with SessionLocal() as db:
+        row = db.get(UserTimezone, user_id)
+        if timezone_name is None or timezone_name == settings.timezone:
+            if row:
+                db.delete(row)
+        elif row:
+            row.timezone = timezone_name
+        else:
+            db.add(UserTimezone(user_id=user_id, timezone=timezone_name))
+        db.commit()
+
+
+def timezones_in_use() -> set[str]:
+    with SessionLocal() as db:
+        return {settings.timezone, *db.scalars(select(UserTimezone.timezone).distinct())}
+
+
+def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_utc: datetime,
+                  timezone_name: str | None = None) -> list[tuple[int, int, str]]:
     """Find reminders for this local minute that still need a meal log.
+
+    Only users in `timezone_name` (default: the bot-wide timezone) are checked,
+    because the date, time and day bounds are local to that timezone.
 
     The query uses UTC bounds because meal timestamps are stored in UTC.
     Suppressed reminders are marked handled here; delivered reminders are marked
@@ -75,7 +105,9 @@ def due_reminders(local_date: date, local_time: str, start_utc: datetime, end_ut
         rows = db.execute(
             select(MealReminder, User.telegram_user_id, already_logged)
             .join(User, User.id == MealReminder.user_id)
+            .outerjoin(UserTimezone, UserTimezone.user_id == MealReminder.user_id)
             .where(
+                func.coalesce(UserTimezone.timezone, settings.timezone) == (timezone_name or settings.timezone),
                 MealReminder.reminder_time == local_time,
                 (MealReminder.last_sent_on.is_(None) | (MealReminder.last_sent_on != local_date)),
             )
@@ -152,6 +184,13 @@ def progress_entries(user_id: int, days: int = 30) -> tuple[list[Meal], list[Wei
     with SessionLocal() as db:
         meals = list(db.scalars(select(Meal).where(Meal.user_id == user_id, Meal.recorded_at >= since).order_by(Meal.recorded_at)))
         weights = list(db.scalars(select(Weight).where(Weight.user_id == user_id, Weight.recorded_at >= since).order_by(Weight.recorded_at)))
+        return meals, weights
+
+
+def all_entries(user_id: int) -> tuple[list[Meal], list[Weight]]:
+    with SessionLocal() as db:
+        meals = list(db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at)))
+        weights = list(db.scalars(select(Weight).where(Weight.user_id == user_id).order_by(Weight.recorded_at)))
         return meals, weights
 
 

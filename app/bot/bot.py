@@ -2,7 +2,7 @@ import asyncio
 from contextlib import suppress
 from functools import wraps
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -20,12 +20,15 @@ from app.bot.access_handlers import (
     access_prompt, admin_menu, admin_action, request_action, my_id, add_user_message, private_chat,
     notify, management_keyboard,
 )
+from app.services.export import export_csv
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import local_time, make_chart
 from app.services.rate_limit import LimitExceeded, limiter
+from app.services.timezones import COMMON as COMMON_TIMEZONES, day_bounds, resolve_timezone
 from app.services.tracker import (
     add_meal,
     add_weight,
+    all_entries,
     delete_entry,
     due_reminders,
     get_meal,
@@ -36,6 +39,9 @@ from app.services.tracker import (
     recent_meals,
     reminder_settings,
     set_reminder,
+    set_timezone,
+    timezone_for,
+    timezones_in_use,
     today_entries,
     update_calorie_target,
     update_meal,
@@ -123,6 +129,10 @@ async def user_for(update: Update):
     return await asyncio.to_thread(get_user, person.id, person.first_name or "User")
 
 
+async def timezone_of(update: Update) -> str:
+    return await asyncio.to_thread(timezone_for, (await user_for(update)).id)
+
+
 @private
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
@@ -151,7 +161,9 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "✏️ Edit meal — fix a saved meal by typing it again\n\n"
         "To estimate food without saving it, type /check followed by the food.\n"
         "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.",
+        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.\n"
+        "Send /export to download all your meals and weights as a spreadsheet file.\n"
+        "Send /timezone if you live somewhere else, so your day and reminders match your clock.",
         reply_markup=menu_for(update.effective_user.id),
     )
 
@@ -292,6 +304,63 @@ async def save_calorie_target(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def timezone_keyboard() -> InlineKeyboardMarkup:
+    buttons = [InlineKeyboardButton(label, callback_data=f"tz:set:{name}") for label, name in COMMON_TIMEZONES.items()]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton(f"Use the default ({settings.timezone})", callback_data="tz:default")])
+    return InlineKeyboardMarkup(rows)
+
+
+@private
+async def timezone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.args:
+        await save_timezone(update, context, " ".join(context.args))
+        return
+    tz = await timezone_of(update)
+    context.user_data["waiting_for"] = "timezone"
+    await update.effective_message.reply_text(
+        f"🌏 Your timezone is {tz} (it is {datetime.now(ZoneInfo(tz)):%H:%M} there now).\n\n"
+        "It sets when your day starts and when reminders arrive. Choose one below, "
+        "or type a city such as London or Kolkata.",
+        reply_markup=timezone_keyboard(),
+    )
+
+
+async def apply_timezone(update: Update, timezone_name: str | None) -> str:
+    await asyncio.to_thread(set_timezone, (await user_for(update)).id, timezone_name)
+    tz = timezone_name or settings.timezone
+    return (
+        f"✅ Timezone set to {tz}. It is {datetime.now(ZoneInfo(tz)):%H:%M} there now.\n\n"
+        "Today, charts, exports and reminder times now follow this timezone."
+    )
+
+
+async def save_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str) -> None:
+    timezone_name = resolve_timezone(raw)
+    if timezone_name is None:
+        await update.message.reply_text(
+            "I don’t recognise that place. Try a large city nearby, for example London, Kolkata, "
+            "or Asia/Tokyo, or choose one of the buttons."
+        )
+        return
+    context.user_data.pop("waiting_for", None)
+    await update.message.reply_text(
+        await apply_timezone(update, timezone_name), reply_markup=menu_for(update.effective_user.id)
+    )
+
+
+@private
+async def timezone_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if context.user_data.get("waiting_for") == "timezone":
+        context.user_data.pop("waiting_for", None)
+    # Button data is client-supplied, so only accept names from the offered list.
+    name = query.data.removeprefix("tz:set:")
+    timezone_name = name if name in COMMON_TIMEZONES.values() else None
+    await query.edit_message_text(await apply_timezone(update, timezone_name))
+
+
 def reminders_keyboard(values: dict[str, str | None]) -> InlineKeyboardMarkup:
     buttons = []
     for meal_type in ("breakfast", "lunch", "dinner"):
@@ -307,7 +376,7 @@ async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data.pop("waiting_for", None)
     values = await asyncio.to_thread(reminder_settings, (await user_for(update)).id)
     await update.effective_message.reply_text(
-        f"⏰ Meal reminders ({settings.timezone})\n\n"
+        f"⏰ Meal reminders ({await timezone_of(update)}, change with /timezone)\n\n"
         "Choose a meal to set its reminder time. A reminder is sent only if that meal has not been logged.",
         reply_markup=reminders_keyboard(values),
     )
@@ -480,8 +549,8 @@ def clear_pending_meal(context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop(key, None)
 
 
-def meal_label(meal) -> str:
-    when = local_time(meal.recorded_at, ZoneInfo(settings.timezone))
+def meal_label(meal, timezone_name: str) -> str:
+    when = local_time(meal.recorded_at, ZoneInfo(timezone_name))
     description = meal.description if len(meal.description) <= 30 else meal.description[:29] + "…"
     return f"{meal.meal_type.title()} · {when.day} {when:%b %H:%M} · {description}"
 
@@ -498,7 +567,8 @@ async def edit_meal_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "You haven’t logged any meals yet.", reply_markup=menu_for(update.effective_user.id)
         )
         return
-    buttons = [[InlineKeyboardButton(meal_label(meal), callback_data=f"edit_meal:pick:{meal.id}")] for meal in meals]
+    tz = await timezone_of(update)
+    buttons = [[InlineKeyboardButton(meal_label(meal, tz), callback_data=f"edit_meal:pick:{meal.id}")] for meal in meals]
     await update.effective_message.reply_text(
         "✏️ Which meal would you like to edit? Here are your latest meals.",
         reply_markup=InlineKeyboardMarkup([*buttons, [EDIT_CANCEL]]),
@@ -539,20 +609,11 @@ async def edit_meal_text(update: Update, context: ContextTypes.DEFAULT_TYPE, mea
     await analyze_text(update, context, text, editing=(meal.id, meal.meal_type))
 
 
-def day_bounds() -> tuple[datetime, datetime]:
-    # Build both midnights in local time before converting to UTC so days with
-    # daylight-saving changes are not assumed to be exactly 24 hours long.
-    tz = ZoneInfo(settings.timezone)
-    local_now = datetime.now(tz)
-    start = datetime.combine(local_now.date(), time.min, tzinfo=tz)
-    end = start + timedelta(days=1)
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
-
-
 @private
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await user_for(update)
-    meals, weights = await asyncio.to_thread(today_entries, user.id, *day_bounds())
+    tz = await asyncio.to_thread(timezone_for, user.id)
+    meals, weights = await asyncio.to_thread(today_entries, user.id, *day_bounds(tz))
     if not meals and not weights:
         await update.effective_message.reply_text("Nothing logged today yet.\n\nTap “Log weight” or “Log meal” when you’re ready.", reply_markup=menu_for(update.effective_user.id))
         return
@@ -572,12 +633,42 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await user_for(update)
     await update.effective_message.chat.send_action(ChatAction.UPLOAD_PHOTO)
     meals, weights = await asyncio.to_thread(progress_entries, user.id)
-    chart = await asyncio.to_thread(make_chart, meals, weights, settings.timezone, user.daily_calorie_target)
+    tz = await asyncio.to_thread(timezone_for, user.id)
+    chart = await asyncio.to_thread(make_chart, meals, weights, tz, user.daily_calorie_target)
     caption = "📈 Your last 30 days"
     if len(weights) >= 2:
         change = weights[-1].weight_kg - weights[0].weight_kg
         caption += f"\nWeight change: {change:+.1f} kg"
     await update.effective_message.reply_photo(chart, caption=caption, reply_markup=menu_for(update.effective_user.id))
+
+
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    return f"{count} {singular if count == 1 else plural_form or singular + 's'}"
+
+
+@private
+async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("waiting_for", None)
+    user = await user_for(update)
+    meals, weights = await asyncio.to_thread(all_entries, user.id)
+    if not meals and not weights:
+        await update.effective_message.reply_text(
+            "There is nothing to export yet.", reply_markup=menu_for(update.effective_user.id)
+        )
+        return
+    await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+    tz = await asyncio.to_thread(timezone_for, user.id)
+    data = await asyncio.to_thread(export_csv, meals, weights, tz)
+    today_local = datetime.now(ZoneInfo(tz)).date()
+    await update.effective_message.reply_document(
+        data,
+        filename=f"health-tracker-{today_local.isoformat()}.csv",
+        caption=(
+            f"📄 Your data: {plural(len(meals), 'meal')} and {plural(len(weights), 'weight entry', 'weight entries')}.\n\n"
+            f"Open it in Excel, Numbers, or Google Sheets. Times are in {tz}."
+        ),
+        reply_markup=menu_for(update.effective_user.id),
+    )
 
 
 @private
@@ -632,6 +723,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     elif str(context.user_data.get("waiting_for", "")).startswith("reminder:"):
         meal_type = context.user_data["waiting_for"].split(":", 1)[1]
         await save_reminder(update, context, meal_type, text)
+    elif context.user_data.get("waiting_for") == "timezone":
+        await save_timezone(update, context, text)
     elif str(context.user_data.get("waiting_for", "")).startswith("edit_meal:"):
         await edit_meal_text(update, context, int(context.user_data["waiting_for"].split(":", 1)[1]), text)
     else:
@@ -648,8 +741,36 @@ def clean_up_access_requests():
         limiter.expire_requests(db)
 
 
+async def send_due_reminders(application: Application, now_utc: datetime) -> None:
+    # Reminder times are local, so check each timezone in use separately:
+    # 08:00 in London and 08:00 in Singapore are different moments.
+    for tz_name in await asyncio.to_thread(timezones_in_use):
+        try:
+            now = now_utc.astimezone(ZoneInfo(tz_name))
+        except (KeyError, ValueError):
+            log.warning("Skipping reminders for unknown timezone %s", tz_name)
+            continue
+        reminders = await asyncio.to_thread(
+            due_reminders, now.date(), now.strftime("%H:%M"), *day_bounds(tz_name, now_utc), tz_name
+        )
+        for reminder_id, telegram_user_id, meal_type in reminders:
+            # Reminder settings survive removal, but delivery requires a current
+            # grant. Check here too because this loop bypasses message handlers.
+            if not await asyncio.to_thread(has_access, telegram_user_id):
+                continue
+            try:
+                await application.bot.send_message(
+                    telegram_user_id,
+                    f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
+                    reply_markup=menu_for(telegram_user_id),
+                )
+            except Exception:
+                log.exception("Could not send %s reminder to user %s", meal_type, telegram_user_id)
+            else:
+                await asyncio.to_thread(mark_reminder_sent, reminder_id, now.date())
+
+
 async def reminder_loop(application: Application) -> None:
-    tz = ZoneInfo(settings.timezone)
     while True:
         # Maintenance also runs during quiet periods, so requests really expire
         # and grouped alerts are delivered even if no further sign-ups arrive.
@@ -669,28 +790,11 @@ async def reminder_loop(application: Application) -> None:
                     )
                 except Exception:
                     log.exception("Could not send grouped access notification")
-        now = datetime.now(tz)
-        start = datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(timezone.utc)
-        end = start + timedelta(days=1)
-        reminders = await asyncio.to_thread(
-            due_reminders, now.date(), now.strftime("%H:%M"), start, end
-        )
-        for reminder_id, telegram_user_id, meal_type in reminders:
-            # Reminder settings survive removal, but delivery requires a current
-            # grant. Check here too because this loop bypasses message handlers.
-            if not await asyncio.to_thread(has_access, telegram_user_id):
-                continue
-            try:
-                await application.bot.send_message(
-                    telegram_user_id,
-                    f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
-                    reply_markup=menu_for(telegram_user_id),
-                )
-            except Exception:
-                log.exception("Could not send %s reminder to user %s", meal_type, telegram_user_id)
-            else:
-                await asyncio.to_thread(mark_reminder_sent, reminder_id, now.date())
-        await asyncio.sleep(max(1, 60 - datetime.now(tz).second))
+        try:
+            await send_due_reminders(application, datetime.now(timezone.utc))
+        except Exception:
+            log.exception("Reminder check failed")
+        await asyncio.sleep(max(1, 60 - datetime.now(timezone.utc).second))
 
 
 async def start_reminder_loop(application: Application) -> None:
@@ -733,6 +837,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CommandHandler("undo", undo))
     app.add_handler(CommandHandler("edit", edit_meal_menu))
+    app.add_handler(CommandHandler("export", export_data))
+    app.add_handler(CommandHandler("timezone", timezone_command))
+    app.add_handler(CallbackQueryHandler(timezone_action, pattern=r"^tz:(set:[A-Za-z_/+-]+|default)$"))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
     app.add_handler(CallbackQueryHandler(edit_meal_action, pattern=r"^edit_meal:(pick:\d+|cancel)$"))
     app.add_handler(CallbackQueryHandler(undo_action, pattern=r"^undo:"))

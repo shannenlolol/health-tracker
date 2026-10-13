@@ -159,11 +159,19 @@ async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "⏰ Reminders — set or disable meal reminders\n"
         "↩️ Undo — remove your last entry\n"
         "✏️ Edit meal — fix a saved meal by typing it again\n\n"
-        "To estimate food without saving it, type /check followed by the food.\n"
-        "Example: /check kopi O\n\n"
-        "You can also type /weight 82.4, /target 1800, /reminders, /today, /progress, /edit, or /undo.\n"
-        "Send /export to download all your meals and weights as a spreadsheet file.\n"
-        "Send /timezone if you live somewhere else, so your day and reminders match your clock.",
+        "Or type a command:\n\n"
+        "/start — open the main menu\n"
+        "/today — today’s meals and totals\n"
+        "/progress — 30-day weight and calorie charts\n"
+        "/check — estimate a food without saving it, e.g. /check kopi O\n"
+        "/weight — log your weight, e.g. /weight 82.4\n"
+        "/edit — edit a saved meal\n"
+        "/undo — remove your last entry\n"
+        "/target — set your daily calorie target, e.g. /target 1800\n"
+        "/reminders — set meal reminders\n"
+        "/timezone — set your timezone, so your day and reminders match your clock\n"
+        "/export — download all your meals and weights as a spreadsheet file\n"
+        "/help — show this message",
         reply_markup=menu_for(update.effective_user.id),
     )
 

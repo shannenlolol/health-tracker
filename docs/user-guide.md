@@ -38,7 +38,7 @@ To estimate a food *without* logging it, tap **🔎 Check meal** (or type `/chec
 
 ## Log your weight
 
-Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or type `/weight 68.5`.
+Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or type `/weight 68.5`. You keep one weight per day: logging again the same day replaces it.
 
 ## See today and your progress
 
@@ -49,11 +49,9 @@ Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or 
 
 ## Fix a mistake
 
-**✏️ Edit entries** shows your eight latest meals and weights. Pick one, then:
-
-- **To correct a meal,** type what it should have been, for example *half a plate of rice, not a full plate*. Check the new estimate and tap **✅ Save**; the meal keeps its original time. Each meal edit uses one meal estimate from your daily allowance. You can also tap **✏️ Edit** under a meal you've just saved.
-- **To correct a weight,** type the right number, such as `62.4`. It keeps its original time.
-- **To delete it,** tap **🗑️ Delete**, then **Yes, delete**. This can't be undone.
+- **✏️ Edit meal** shows your five latest meals. Pick one and type what it should have been, for example *half a plate of rice, not a full plate*. Check the new estimate and tap **✅ Save**; the meal keeps its original time. Each edit uses one meal estimate from your daily allowance. You can also tap **✏️ Edit** under a meal you've just saved.
+- **To delete a meal,** pick it in **✏️ Edit meal**, tap **🗑️ Delete**, then **Yes, delete**. This can't be undone.
+- **Wrong weight?** Log it again. You keep one weight per day, so the new one replaces today's.
 
 ## Settings
 
@@ -74,7 +72,7 @@ Tap **📥 Download** or send `/export`. The bot replies with a spreadsheet file
 | `/progress` | Weight and calorie charts for 7 days, 30 days or all time |
 | `/check kopi O` | Estimate a food without saving it |
 | `/weight 82.4` | Log your weight |
-| `/edit` | Change or delete a saved meal or weight |
+| `/edit` | Change or delete a saved meal |
 | `/target 1800` | Set your daily calorie target |
 | `/reminders` | Set meal reminders |
 | `/timezone` | Set your timezone |

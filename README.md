@@ -21,7 +21,7 @@
 - **Meals from text or photos.** Type "chicken rice, less rice" or send a picture. The bot estimates calories, protein, carbs and fat, and nothing is saved until you check it and tap Save.
 - **Weight and daily totals.** 📋 Today shows meals and calories against your own target. 📈 Progress charts the last 7 days, 30 days or all time.
 - **Gentle reminders** for breakfast, lunch and dinner, sent only if that meal hasn't been logged yet.
-- **Fix mistakes:** correct or delete any recent meal or weight from ✏️ Edit entries; meals are re-estimated from your retyped description.
+- **Fix mistakes:** edit a saved meal by retyping it, or delete it. Logging your weight again the same day replaces it.
 - **Your data, your time:** `/export` downloads everything as a spreadsheet, and `/timezone` makes your day and reminders follow your own clock.
 - **Invite-only.** New people tap *Request access*, and the owner approves or rejects them inside Telegram.
 

@@ -137,6 +137,30 @@ def add_weight(user_id: int, kg: float) -> Weight:
         return entry
 
 
+def log_weight(user_id: int, kg: float, start_utc: datetime, end_utc: datetime) -> tuple[Weight, float | None]:
+    """Save the day's weight, replacing the latest one already logged between the two times.
+
+    Keeping one weight per day lets a typo be fixed by logging again. Returns the
+    entry and the weight it replaced, or None if it is the day's first.
+    """
+    with SessionLocal() as db:
+        entry = db.scalar(
+            select(Weight)
+            .where(Weight.user_id == user_id, Weight.recorded_at >= start_utc, Weight.recorded_at < end_utc)
+            .order_by(Weight.recorded_at.desc())
+            .limit(1)
+        )
+        previous = entry.weight_kg if entry else None
+        if entry is None:
+            entry = Weight(user_id=user_id, weight_kg=kg)
+            db.add(entry)
+        else:
+            entry.weight_kg = kg
+            entry.recorded_at = datetime.now(timezone.utc)
+        db.commit()
+        return entry, previous
+
+
 def add_meal(user_id: int, estimate: MealEstimate, meal_type: str, image_file_id: str | None = None) -> Meal:
     with SessionLocal() as db:
         meal = Meal(user_id=user_id, meal_type=meal_type, image_file_id=image_file_id, **estimate.model_dump())
@@ -145,32 +169,9 @@ def add_meal(user_id: int, estimate: MealEstimate, meal_type: str, image_file_id
         return meal
 
 
-def recent_entries(user_id: int, limit: int = 8) -> list[tuple[str, Meal | Weight]]:
-    """The latest meals and weights together, newest first, as ("meal" | "weight", entry) pairs."""
+def recent_meals(user_id: int, limit: int = 5) -> list[Meal]:
     with SessionLocal() as db:
-        meals = db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(limit))
-        weights = db.scalars(select(Weight).where(Weight.user_id == user_id).order_by(Weight.recorded_at.desc()).limit(limit))
-        entries = [("meal", m) for m in meals] + [("weight", w) for w in weights]
-    # Each list is already the newest `limit` of its kind, so merging them and
-    # keeping the newest `limit` overall gives the right mix.
-    return sorted(entries, key=lambda pair: pair[1].recorded_at, reverse=True)[:limit]
-
-
-def get_weight(user_id: int, weight_id: int) -> Weight | None:
-    """Return the weight only if it belongs to this user; button data can't be trusted."""
-    with SessionLocal() as db:
-        return db.scalar(select(Weight).where(Weight.id == weight_id, Weight.user_id == user_id))
-
-
-def update_weight(user_id: int, weight_id: int, kg: float) -> Weight | None:
-    """Correct a saved weight, keeping its original time. Returns None if it was deleted meanwhile."""
-    with SessionLocal() as db:
-        entry = db.scalar(select(Weight).where(Weight.id == weight_id, Weight.user_id == user_id))
-        if entry is None:
-            return None
-        entry.weight_kg = kg
-        db.commit()
-        return entry
+        return list(db.scalars(select(Meal).where(Meal.user_id == user_id).order_by(Meal.recorded_at.desc()).limit(limit)))
 
 
 def get_meal(user_id: int, meal_id: int) -> Meal | None:

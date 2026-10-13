@@ -4,11 +4,12 @@ from app.services.access import is_admin
 
 MENU = ReplyKeyboardMarkup(
     [
-        ["⚖️ Log weight", "🍽️ Log meal"],
-        ["🔎 Check meal", "📋 Today"],
-        ["📈 Progress", "🎯 Calorie target"],
-        ["⏰ Reminders", "📥 Download"],
-        ["✏️ Edit entries", "❓ Help"],
+        # Grouped by task: meals, then weight, then settings and files.
+        ["🍽️ Log meal", "🔎 Check meal"],
+        ["✏️ Edit meal", "📋 Today"],
+        ["⚖️ Log weight", "📈 Progress"],
+        ["🎯 Calorie target", "⏰ Reminders"],
+        ["📥 Download", "❓ Help"],
     ],
     resize_keyboard=True,
     is_persistent=True,

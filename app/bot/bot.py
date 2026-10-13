@@ -149,17 +149,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("waiting_for", None)
     await update.message.reply_text(
-        "Here’s what I can do:\n\n"
-        "⚖️ Log weight — enter your weight in kg\n"
-        "🍽️ Log meal — type the food or send a photo\n"
-        "🔎 Check meal — estimate food without saving it\n"
-        "📋 Today — see today’s totals\n"
-        "📈 Progress — see your 30-day charts\n"
-        "🎯 Calorie target — change your daily calorie goal\n"
-        "⏰ Reminders — set or disable meal reminders\n"
-        "↩️ Undo — remove your last entry\n"
-        "✏️ Edit meal — fix a saved meal by typing it again\n\n"
-        "Or type a command:\n\n"
+        "Tap the menu buttons or use the commands:\n\n"
         "/start — open the main menu\n"
         "/today — today’s meals and totals\n"
         "/progress — 30-day weight and calorie charts\n"

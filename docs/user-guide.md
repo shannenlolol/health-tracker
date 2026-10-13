@@ -42,7 +42,7 @@ Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or 
 
 ## See today and your progress
 
-- **📋 Today** lists today's meals, total calories against your target, protein, and today's weight.
+- **📋 Today** lists today's meals with calories, protein, carbs and fat for each, then your totals and a progress bar against your calorie target (how many kcal are left, or how far over you are). After you save a meal, the same bar shows where your day stands.
 - **📈 Progress** sends charts of your weight and daily calories for the last 30 days. The dashed line is your calorie goal.
 
 > **Screenshot placeholder:** Today summary · Progress chart.

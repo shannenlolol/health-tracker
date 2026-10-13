@@ -137,6 +137,18 @@ async def test_edit_replaces_meal_and_keeps_its_type(chat, sessions):
 
 
 @pytest.mark.anyio
+async def test_editing_an_older_meal_totals_that_day(chat, sessions):
+    user = tracker.get_user(1, 'Ann')
+    meal = save_lunch(user)
+    tracker.add_meal(user.id, RICE, 'dinner')  # Logged now, so it belongs to a later day.
+    await start_edit(chat, meal)
+    await bot.text_message(chat.message('chicken rice, half rice'), chat.context)
+    await bot.meal_action(chat.tap('meal:save'), chat.context)
+    # Only the edited lunch counts towards its own day, not today's dinner.
+    assert '📋 Mon 12 Oct: 450 / ' in chat.last_text()
+
+
+@pytest.mark.anyio
 async def test_change_during_edit_still_replaces(chat, sessions):
     meal = save_lunch(tracker.get_user(1, 'Ann'))
     await start_edit(chat, meal)

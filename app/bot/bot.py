@@ -24,6 +24,7 @@ from app.services.export import export_csv
 from app.services.meal_analyzer import MealAnalyzer, MealEstimate
 from app.services.progress import local_time, make_chart
 from app.services.rate_limit import LimitExceeded, limiter
+from app.services.summary import saved_text, short_date, today_text
 from app.services.timezones import COMMON as COMMON_TIMEZONES, day_bounds, resolve_timezone
 from app.services.tracker import (
     add_meal,
@@ -510,7 +511,8 @@ async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await query.answer("Choose Breakfast, Lunch, Dinner, or Snack first.", show_alert=True)
             return
         await query.answer()
-        user_id = (await user_for(update)).id
+        user = await user_for(update)
+        user_id = user.id
         edit_id = context.user_data.get("pending_edit_id")
         if edit_id:
             meal = await asyncio.to_thread(update_meal, user_id, edit_id, MealEstimate(**pending), meal_type)
@@ -523,9 +525,13 @@ async def meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if meal is None:
             await query.edit_message_text("That meal was removed, so nothing was changed.")
             return
+        # Total the day the meal belongs to: an edited meal may be from an earlier day.
+        tz = await asyncio.to_thread(timezone_for, user_id)
+        meal_day = local_time(meal.recorded_at, ZoneInfo(tz))
+        meals, _ = await asyncio.to_thread(today_entries, user_id, *day_bounds(tz, meal_day))
+        day_label = "Today" if meal_day.date() == datetime.now(ZoneInfo(tz)).date() else short_date(meal_day.date())
         await query.edit_message_text(
-            f"✅ {meal.meal_type.title()} {'updated' if edit_id else 'saved'}\n\n"
-            f"{meal.description} — about {meal.estimated_calories:,} kcal",
+            saved_text(meal, bool(edit_id), sum(m.estimated_calories for m in meals), user.daily_calorie_target, day_label),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("✏️ Edit", callback_data=f"edit_meal:pick:{meal.id}")
             ]]),
@@ -611,19 +617,12 @@ async def edit_meal_text(update: Update, context: ContextTypes.DEFAULT_TYPE, mea
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await user_for(update)
     tz = await asyncio.to_thread(timezone_for, user.id)
-    meals, weights = await asyncio.to_thread(today_entries, user.id, *day_bounds(tz))
-    if not meals and not weights:
-        await update.effective_message.reply_text("Nothing logged today yet.\n\nTap “Log weight” or “Log meal” when you’re ready.", reply_markup=menu_for(update.effective_user.id))
+    meals, _ = await asyncio.to_thread(today_entries, user.id, *day_bounds(tz))
+    if not meals:
+        await update.effective_message.reply_text("No meals logged today yet.\n\nTap “Log meal” when you’re ready.", reply_markup=menu_for(update.effective_user.id))
         return
-    lines = ["📋 Today"]
-    if weights:
-        lines += [f"\n⚖️ Weight: {weights[-1].weight_kg:g} kg"]
-    if meals:
-        lines.append("\n🍽️ Meals")
-        lines.extend(f"• {m.description} — {m.estimated_calories:,} kcal" for m in meals)
-        calories = sum(m.estimated_calories for m in meals)
-        lines += [f"\n🔥 Total: {calories:,} / {user.daily_calorie_target:,} kcal", f"🥩 Protein: {sum(m.protein_g for m in meals):g} g"]
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=menu_for(update.effective_user.id))
+    text = today_text(meals, user.daily_calorie_target, datetime.now(ZoneInfo(tz)).date())
+    await update.effective_message.reply_text(text, reply_markup=menu_for(update.effective_user.id))
 
 
 @private

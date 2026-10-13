@@ -574,6 +574,14 @@ Builds are triggered by changes to `app/`, `Dockerfile`, `.dockerignore`, `requi
 
 Changes to `.env` or Compose settings must still be applied on the NAS. Automatic image updates do not replace those files.
 
+**Publish a release (optional).** Releases give people a version to pin instead of following every change to `main`:
+
+1. On GitHub, open **Releases → Draft a new release**.
+2. Create a tag such as `v1.2.0` on `main`, add a short note on what changed, and publish it.
+3. **Publish bot container** runs again and adds two image tags: `1.2.0` (exactly this release) and `1.2` (moves to `1.2.1`, `1.2.2` and so on when you release fixes).
+
+Use the next patch number (`v1.2.1`) for fixes, the next minor number (`v1.3.0`) for new features, and the next major number (`v2.0.0`) when people must change their setup to upgrade.
+
 ### 12d. Roll back a bad update
 
 Every published image is also tagged with its commit ID, so you can return to any earlier version.

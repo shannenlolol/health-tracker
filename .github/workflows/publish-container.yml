@@ -3,6 +3,9 @@ name: Publish bot container
 on:
   push:
     branches: [main]
+    # A GitHub release such as v1.2.0 publishes 1.2.0 and 1.2 image tags for
+    # people who pin a version. Path filters do not apply to tag pushes.
+    tags: ["v*.*.*"]
     paths:
       - "app/**"
       - "Dockerfile"
@@ -15,8 +18,9 @@ permissions:
   contents: read
   packages: write
 
+# One queue per branch or tag, so a release build cannot cancel a main build.
 concurrency:
-  group: publish-production-container
+  group: publish-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -51,14 +55,27 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      # main → latest; every build → full commit ID (used for rollback);
+      # release v1.2.3 → 1.2.3 and 1.2 (the second picks up 1.2.x fixes).
+      - name: Choose image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
       - name: Build and publish ARM64 and AMD64 images
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/arm64,linux/amd64
           push: true
-          tags: |
-            ${{ steps.image.outputs.name }}:latest
-            ${{ steps.image.outputs.name }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

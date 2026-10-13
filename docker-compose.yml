@@ -22,6 +22,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  # Optional database viewer in the browser. Never starts unless asked for:
+  #   sudo docker compose -p health-tracker --profile adminer up -d adminer
+  # Reachable only on your home network; don't port-forward it on the router.
+  adminer:
+    image: adminer:6.1.1@sha256:74f29c416e148b98305e84446a18db7cd2c1038264dec464359d36774ef080ce
+    profiles: ["adminer"]
+    restart: "no"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
   updater:
     # Pinned (tag and digest) because it controls Docker on the NAS through
     # docker.sock. Dependabot proposes updates; Watchtower never updates itself.

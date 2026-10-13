@@ -549,7 +549,7 @@ BOT_IMAGE=ghcr.io/your-github-owner/your-repository:latest
 **12b(iv)** From the NAS project folder, run:
 
 ```bash
-sudo docker compose -p health-tracker -f docker-comopse.yml up -d
+sudo docker compose -p health-tracker -f docker-compose.yml up -d
 sudo docker compose -p health-tracker -f docker-compose.yml ps
 ```
 
@@ -558,6 +558,8 @@ sudo docker compose -p health-tracker -f docker-compose.yml ps
 **12b(vi)** Continue with step 6 to become an admin. In all maintenance commands, replace `docker-compose.manual.yml` with `docker-compose.yml`.
 
 The updater checks about every five minutes and replaces only the labeled bot container. It has access to the NAS Docker socket to manage that container. Records remain in `postgres-data`.
+
+Because of that access, the updater image is pinned to an exact version in `docker-compose.yml` and never updates itself. When a Dependabot pull request bumps it and you merge it, upload the new `docker-compose.yml` to the NAS and run the `up -d` command from 12b(iv) again. Only the updater is recreated.
 
 
 ### 12c. Publish future changes
@@ -571,6 +573,30 @@ The updater checks about every five minutes and replaces only the labeled bot co
 Builds are triggered by changes to `app/`, `Dockerfile`, `.dockerignore`, `requirements.txt`, or the publishing workflow. Documentation-only changes do not trigger a build. A fork does not automatically receive upstream code changes; bring those into your fork first.
 
 Changes to `.env` or Compose settings must still be applied on the NAS. Automatic image updates do not replace those files.
+
+### 12d. Roll back a bad update
+
+Every published image is also tagged with its commit ID, so you can return to any earlier version.
+
+**12d(i)** On GitHub, open **Actions → Publish bot container** and find the last run that worked. Copy its full commit ID (the 40-character code shown under the run's commit).
+
+**12d(ii)** In the NAS `.env`, point the bot at that image:
+
+```dotenv
+BOT_IMAGE=ghcr.io/your-github-owner/your-repository:PASTE-THE-COMMIT-ID
+```
+
+**12d(iii)** Apply it:
+
+```bash
+sudo docker compose -p health-tracker -f docker-compose.yml up -d
+```
+
+While `BOT_IMAGE` names a commit, automatic updates are paused, because that tag never changes. After the fix is published, set `BOT_IMAGE` back to `...:latest` and run the same command.
+
+Rolling back does not touch your records. Newer versions only ever add database tables, which older versions ignore.
+
+For a manual installation, upload the earlier source files instead and rebuild as in 10a(v).
 
 ## 13. Optional: local development
 

@@ -23,7 +23,9 @@ services:
       timeout: 5s
       retries: 10
   updater:
-    image: nickfedor/watchtower:latest
+    # Pinned (tag and digest) because it controls Docker on the NAS through
+    # docker.sock. Dependabot proposes updates; Watchtower never updates itself.
+    image: nickfedor/watchtower:1.23.0@sha256:45b54f6dc15227cfb38dbb826f2881aa0f56aaf0c255cdbb38bd80e598bdca9a
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"

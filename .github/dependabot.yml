@@ -24,6 +24,21 @@ updates:
       github-actions:
         patterns: ["*"]
 
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    ignore:
+      # A new PostgreSQL major version cannot read the existing data folder;
+      # it needs a dump and restore, so upgrade it by hand.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+    groups:
+      compose-images:
+        patterns: ["*"]
+
   - package-ecosystem: docker
     directory: "/"
     schedule:

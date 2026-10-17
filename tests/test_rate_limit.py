@@ -397,7 +397,7 @@ class ReviewFixTests(Fixture):
                 asyncio.run(bot.reminder_loop(app))
         due.assert_called_once()
 
-    def test_reminder_points_to_start(self):
+    def test_reminder_has_a_log_button(self):
         app = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         with patch.object(bot, 'timezones_in_use', return_value={bot.settings.timezone}), \
                 patch.object(bot, 'due_reminders', return_value=[(1, 42, 'lunch')]), \
@@ -405,8 +405,9 @@ class ReviewFixTests(Fixture):
                 patch.object(bot, 'mark_reminder_sent') as marked:
             asyncio.run(bot.send_due_reminders(app, datetime.now(timezone.utc)))
         args, kwargs = app.bot.send_message.call_args
-        self.assertEqual(args, (42, '⏰ Time to log lunch.\n\nPress /start to get started!'))
-        self.assertEqual(kwargs['reply_markup'], bot.menu_for(42))
+        self.assertEqual(args, (42, '⏰ Time to log lunch. You haven’t logged it today yet.'))
+        [[button]] = kwargs['reply_markup'].inline_keyboard
+        self.assertEqual((button.text, button.callback_data), ('🍽️ Log lunch', 'log_meal:lunch'))
         marked.assert_called_once()
 
 

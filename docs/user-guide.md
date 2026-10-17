@@ -56,7 +56,7 @@ Tap **⚖️ Log weight** and send your weight in kilograms, such as `68.5`. Or 
 ## Settings
 
 - **🎯 Calorie target:** send a whole number, such as `1800`.
-- **⏰ Reminders:** choose Breakfast, Lunch or Dinner and send a time, such as `8am` or `12:30`; send `none` to turn it off. A reminder is only sent if you haven't logged that meal yet that day.
+- **⏰ Reminders:** choose Breakfast, Lunch or Dinner and send a time, such as `8am` or `12:30`; send `none` to turn it off. A reminder is only sent if you haven't logged that meal yet that day. Tap its **🍽️ Log** button to log the meal straight away, with the meal type already chosen.
 - **Timezone:** send `/timezone` and tap a city or type one, such as *London*. Your timezone decides when your day starts and when reminders arrive. It starts as the owner's default.
 
 ## Download your data

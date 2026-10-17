@@ -786,9 +786,11 @@ async def send_due_reminders(application: Application, now_utc: datetime) -> Non
             if not await asyncio.to_thread(has_access, telegram_user_id):
                 continue
             try:
+                # Telegram may hide the attached menu in a chat the user has cleared;
+                # /start is tappable in the text and always brings the menu back.
                 await application.bot.send_message(
                     telegram_user_id,
-                    f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
+                    f"⏰ Time to log {meal_type}.\n\nPress /start to get started!",
                     reply_markup=menu_for(telegram_user_id),
                 )
             except Exception:

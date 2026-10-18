@@ -1,4 +1,4 @@
-"""Editing and deleting saved meals: storage rules and the full Telegram flow, with OpenAI mocked."""
+"""Editing and deleting saved meals, and logging from a reminder: storage rules and the full Telegram flow, with OpenAI mocked."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -267,3 +267,41 @@ async def test_weight_reply_says_when_it_replaced_todays(chat, sessions):
     assert chat.last_text().startswith('✅ Saved: 64.2 kg')
     await bot.weight_command(chat.message('/weight 62.4'), SimpleNamespace(user_data={}, args=['62.4']))
     assert chat.last_text() == '✅ Updated today’s weight: 62.4 kg (was 64.2 kg)'
+
+
+# --- Reminder 🍽️ Log button ------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_log_button_asks_with_menu_and_preselects_type(chat, sessions):
+    tracker.get_user(1, 'Ann')
+    await bot.log_meal_action(chat.tap('log_meal:lunch'), chat.context)
+    assert chat.last_text().startswith('What did you eat?')
+    assert chat.sent[-1][1] == bot.menu_for(1)  # The reply brings the menu back.
+
+    await bot.text_message(chat.message('chicken rice, half rice'), chat.context)
+    assert 'meal:type:lunch' in chat.buttons()
+    assert any(b.text == '✅ Lunch' for row in chat.sent[-1][1].inline_keyboard for b in row)
+    await bot.meal_action(chat.tap('meal:save'), chat.context)  # No type to choose first.
+    assert chat.last_text().startswith('✅')
+    assert meal_count(sessions) == 1
+    assert 'preset_meal_type' not in chat.context.user_data
+
+
+@pytest.mark.anyio
+async def test_preset_type_is_dropped_once_another_prompt_replaces_it(chat, sessions):
+    tracker.get_user(1, 'Ann')
+    await bot.log_meal_action(chat.tap('log_meal:lunch'), chat.context)
+    await bot.text_message(chat.message('🔎 Check meal'), chat.context)
+    await bot.text_message(chat.message('kopi O'), chat.context)
+    # Later, a meal typed without pressing Log meal must not be filed as lunch.
+    await bot.text_message(chat.message('kaya toast'), chat.context)
+    assert 'pending_meal_type' not in chat.context.user_data
+
+
+@pytest.mark.anyio
+async def test_log_meal_from_menu_has_no_preset(chat, sessions):
+    tracker.get_user(1, 'Ann')
+    await bot.log_meal_action(chat.tap('log_meal:dinner'), chat.context)
+    await bot.text_message(chat.message('🍽️ Log meal'), chat.context)
+    await bot.text_message(chat.message('kaya toast'), chat.context)
+    assert 'pending_meal_type' not in chat.context.user_data

@@ -203,10 +203,20 @@ async def save_weight(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: s
 
 async def ask_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["waiting_for"] = "meal"
-    await update.message.reply_text(
+    context.user_data.pop("preset_meal_type", None)
+    await update.effective_message.reply_text(
         "What did you eat?\n\nType it, for example:\nchicken rice, less rice\n\nOr send me a clear photo of the meal.",
         reply_markup=menu_for(update.effective_user.id),
     )
+
+
+@private
+async def log_meal_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A reminder's 🍽️ Log button: ask for the meal with its type already chosen."""
+    query = update.callback_query
+    await query.answer()
+    await ask_meal(update, context)
+    context.user_data["preset_meal_type"] = query.data.split(":")[1]
 
 
 def estimate_text(estimate: MealEstimate) -> str:
@@ -461,7 +471,11 @@ async def show_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE, esti
                         editing: tuple[int, str] | None = None) -> None:
     """Show an estimate for confirmation; `editing` is (meal ID, meal type) when replacing a saved meal."""
     context.user_data["pending_meal"] = estimate.model_dump()
-    context.user_data.pop("waiting_for", None)
+    # A reminder's type applies only to the meal it asked for; once another
+    # prompt has replaced it, the user chooses the type as usual.
+    preset = context.user_data.pop("preset_meal_type", None)
+    if context.user_data.pop("waiting_for", None) != "meal":
+        preset = None
     # Every new estimate resets the edit target, so a later, unrelated estimate
     # can never overwrite the meal that was being edited.
     if editing:
@@ -469,10 +483,12 @@ async def show_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE, esti
     else:
         context.user_data.pop("pending_edit_id", None)
         context.user_data.pop("pending_meal_type", None)
+        if preset:
+            context.user_data["pending_meal_type"] = preset
     heading = "✏️ Editing a saved meal\n\n" if editing else ""
     await update.effective_message.reply_text(
         heading + estimate_text(estimate),
-        reply_markup=meal_confirmation_keyboard(editing[1] if editing else None),
+        reply_markup=meal_confirmation_keyboard(context.user_data.get("pending_meal_type")),
     )
 
 
@@ -786,10 +802,14 @@ async def send_due_reminders(application: Application, now_utc: datetime) -> Non
             if not await asyncio.to_thread(has_access, telegram_user_id):
                 continue
             try:
+                # An inline button works even when Telegram hides the menu, e.g. in a
+                # cleared chat. A message can't carry both, so the reply sends the menu.
                 await application.bot.send_message(
                     telegram_user_id,
                     f"⏰ Time to log {meal_type}. You haven’t logged it today yet.",
-                    reply_markup=menu_for(telegram_user_id),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                        f"🍽️ Log {meal_type}", callback_data=f"log_meal:{meal_type}"
+                    )]]),
                 )
             except Exception:
                 log.exception("Could not send %s reminder to user %s", meal_type, telegram_user_id)
@@ -867,6 +887,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("timezone", timezone_command))
     app.add_handler(CallbackQueryHandler(timezone_action, pattern=r"^tz:(set:[A-Za-z_/+-]+|default)$"))
     app.add_handler(CallbackQueryHandler(meal_action, pattern=r"^meal:"))
+    app.add_handler(CallbackQueryHandler(log_meal_action, pattern=r"^log_meal:(breakfast|lunch|dinner)$"))
     app.add_handler(CallbackQueryHandler(
         edit_meal_action, pattern=r"^edit_meal:((pick|delete|confirm):\d+|cancel)$"
     ))

@@ -42,13 +42,16 @@ class OneUpdatePerUser(BaseUpdateProcessor):
             self.notified.discard(user.id)
 
     async def reject(self, update: Update, uid: int) -> None:
+        # Claim the notice before awaiting Telegram: updates fetched together are
+        # rejected concurrently, and marking it afterwards let each send its own.
+        first_notice = uid not in self.notified
+        self.notified.add(uid)
         try:
             if update.callback_query:
                 # Always answer button taps so Telegram stops showing a spinner.
-                await update.callback_query.answer(BUSY_TEXT if uid not in self.notified else None)
-            elif update.effective_message and uid not in self.notified:
+                await update.callback_query.answer(BUSY_TEXT if first_notice else None)
+            elif update.effective_message and first_notice:
                 await update.effective_message.reply_text(BUSY_TEXT)
-            self.notified.add(uid)
         except Exception:
             log.exception("Could not send busy notice to user %s", uid)
 

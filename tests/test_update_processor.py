@@ -54,6 +54,27 @@ class OneUpdatePerUserTests(unittest.TestCase):
         second.effective_message.reply_text.assert_awaited_once_with(BUSY_TEXT)
         third.effective_message.reply_text.assert_not_awaited()
 
+    def test_updates_rejected_at_the_same_time_get_one_notice(self):
+        async def slow_reply(*args):
+            await asyncio.sleep(0.01)
+
+        async def scenario():
+            processor = OneUpdatePerUser(8)
+            processor.busy.add(1)
+            # A double tap arrives in one batch, so both rejections run concurrently.
+            updates = [message_update(1) for _ in range(2)]
+            for update in updates:
+                update.effective_message.reply_text.side_effect = slow_reply
+
+            async def handler():
+                raise AssertionError('handler must not run')
+            await asyncio.gather(*(processor.process_update(u, handler()) for u in updates))
+            return updates
+
+        first, second = asyncio.run(scenario())
+        first.effective_message.reply_text.assert_awaited_once_with(BUSY_TEXT)
+        second.effective_message.reply_text.assert_not_awaited()
+
     def test_rejected_button_taps_are_always_answered(self):
         async def scenario():
             processor = OneUpdatePerUser(8)

@@ -14,7 +14,10 @@
   <a href="https://github.com/shannenlolol/health-tracker/releases"><img src="https://img.shields.io/github/v/release/shannenlolol/health-tracker" alt="Latest release"></a>
 </p>
 
-> **Demo placeholder:** 20–30 s recording: meal photo → estimate → choose Lunch → Save → 📋 Today → 📈 Progress.
+<p align="center">
+  <a href="assets/videos/health-tracker-trailer.mp4"><img src="assets/videos/health-tracker-trailer.gif" alt="Demo: a 7:30 pm dinner reminder, a meal photo estimated and saved as dinner, then Today and the 7-day Progress chart" width="320"></a><br>
+  <sub>A dinner reminder, a meal photo, then 📋 Today and 📈 Progress. <a href="assets/videos/health-tracker-trailer.mp4">Watch the full-quality video</a>.</sub>
+</p>
 
 ## Features
 

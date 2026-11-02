@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 # Run the bot as an unprivileged user. The app files stay root-owned and
 # read-only to it, so a compromised bot cannot alter its own code.
 RUN useradd --create-home --uid 10001 app

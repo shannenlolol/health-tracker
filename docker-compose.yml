@@ -26,7 +26,7 @@ services:
   #   sudo docker compose -p health-tracker --profile adminer up -d adminer
   # Reachable only on your home network; don't port-forward it on the router.
   adminer:
-    image: adminer:6.1.1@sha256:74f29c416e148b98305e84446a18db7cd2c1038264dec464359d36774ef080ce
+    image: adminer:6.2.0@sha256:400af848ac3f57938abde4867677df1b195674d232c8896a27d111d04b9c088c
     profiles: ["adminer"]
     restart: "no"
     environment:
@@ -38,7 +38,7 @@ services:
   updater:
     # Pinned (tag and digest) because it controls Docker on the NAS through
     # docker.sock. Dependabot proposes updates; Watchtower never updates itself.
-    image: nickfedor/watchtower:1.23.0@sha256:45b54f6dc15227cfb38dbb826f2881aa0f56aaf0c255cdbb38bd80e598bdca9a
+    image: nickfedor/watchtower:1.23.2@sha256:62fb91130ddb493f869cad7e198fa260dd16c5da293ed092cbd5d8781566f7a6
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"

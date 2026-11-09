@@ -1,7 +1,7 @@
 python-telegram-bot[rate-limiter]==22.8
-openai==3.27.0
-SQLAlchemy==2.1.4
-psycopg[binary]==3.3.6
+openai==3.46.0
+SQLAlchemy==2.1.8
+psycopg[binary]==3.3.8
 python-dotenv==1.2.4
 matplotlib==3.11.2
-pydantic==2.14.0
+pydantic==2.14.3
